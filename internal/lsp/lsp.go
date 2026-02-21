@@ -81,6 +81,8 @@ func (s *server) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.
 		return nil, s.didClose(req)
 	case "textDocument/hover":
 		return s.hover(req)
+	case "textDocument/completion":
+		return s.completion(req)
 	case "textDocument/diagnostic":
 		return s.diagnosticFull(req)
 	case "textDocument/semanticTokens/full":
@@ -101,6 +103,9 @@ func (s *server) initialize(req *jsonrpc2.Request) (any, error) {
 				Change:    protocol.Full,
 			},
 			HoverProvider: &protocol.Or_ServerCapabilities_hoverProvider{Value: true},
+			CompletionProvider: &protocol.CompletionOptions{
+				TriggerCharacters: []string{"."},
+			},
 			SemanticTokensProvider: protocol.SemanticTokensOptions{
 				Legend: protocol.SemanticTokensLegend{
 					TokenTypes:     semanticTypeLegend,
