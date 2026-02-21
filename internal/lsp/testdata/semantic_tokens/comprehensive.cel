@@ -1,0 +1,121 @@
+// A comprehensive CEL expression covering many language features.
+// This exercises: operators, macros, functions, methods, type conversions,
+// ternary, list/map literals, select, index, in, negation, unary minus,
+// comprehensions (nested), string/bytes/number/bool/null literals,
+// and multi-line expressions.
+
+// Arithmetic + comparison chain
+(x + y) * 2 - z / w % 3 >= 10 &&
+
+// String methods and functions
+"hello world".contains("world") &&
+"hello".startsWith("he") &&
+"hello".endsWith("lo") &&
+"abc123".matches("[a-z]+[0-9]+") &&
+size("test") == 4 &&
+
+// Type conversions
+int("42") + double("3.14") > 0.0 &&
+string(42) != "" &&
+uint(10) > 0u &&
+bool("true") == true &&
+bytes("hello") == b"hello" &&
+type(42) == int &&
+dyn(1) == 1 &&
+
+// List operations
+[1, 2, 3].size() == 3 &&
+size([10, 20, 30]) == 3 &&
+[1, 2, 3][1] == 2 &&
+
+// Map operations
+{"a": 1, "b": 2}.size() == 2 &&
+{"key": "value"}["key"] == "value" &&
+has({"field": true}.field) &&
+
+// In operator
+"a" in ["a", "b", "c"] &&
+"x" in {"x": 1, "y": 2} &&
+
+// Macros - all
+[1, 2, 3].all(i, i > 0) &&
+
+// Macros - exists
+[1, 2, 3].exists(i, i == 2) &&
+
+// Macros - exists_one
+[1, 2, 3].exists_one(i, i > 2) &&
+
+// Macros - map
+[1, 2, 3].map(i, i * 2) == [2, 4, 6] &&
+
+// Macros - filter
+[1, 2, 3, 4, 5].filter(i, i > 3) == [4, 5] &&
+
+// Nested macros
+[1, 2, 3].filter(i, i > 1).map(i, i * 10).exists(i, i == 30) &&
+
+// Ternary
+(x > 0 ? "positive" : "non-positive") != "" &&
+
+// Logical operators
+!(false) &&
+true || false &&
+
+// Comparison operators
+1 == 1 &&
+1 != 2 &&
+1 < 2 &&
+1 <= 2 &&
+2 > 1 &&
+2 >= 1 &&
+
+// Negation and unary minus
+!false &&
+-x + 1 > 0 &&
+
+// Nested select
+msg.field.nested == "value" &&
+
+// Boolean and null keywords
+true != false &&
+null == null &&
+
+// Bytes literal
+b"hello" == bytes("hello") &&
+
+// Multi-value list and map
+[1, "two", 3.0, true, null].size() == 5 &&
+{"int": 1, "str": "two", "bool": true}.size() == 3 &&
+
+// Chained methods
+"Hello World".endsWith("World") &&
+
+// Complex nested comprehension
+(
+  [1, 2, 3, 4, 5]
+    .filter(n, n % 2 == 0)
+    .map(n, n * n)
+    .all(n, n > 0)
+) &&
+
+// Duration and timestamp type conversions
+duration("1h") > duration("30m") &&
+timestamp("2023-01-01T00:00:00Z") < timestamp("2024-01-01T00:00:00Z") &&
+
+// More string methods
+"foobar".contains("oba") &&
+"foobar".startsWith("foo") &&
+"foobar".endsWith("bar") &&
+"hello123".matches("^[a-z]+[0-9]+$") &&
+
+// Size variations (function and method forms)
+size("hello") == 5 &&
+"hello".size() == 5 &&
+size([1, 2]) == 2 &&
+[1, 2].size() == 2 &&
+size({"a": 1}) == 1 &&
+{"a": 1}.size() == 1 &&
+
+// Final expression
+x + y == z

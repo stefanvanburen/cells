@@ -10,14 +10,19 @@ import (
 )
 
 func main() {
-	root := &cli.Command{
+	var root *cli.Command
+	root = &cli.Command{
 		Name:      "cells",
 		ShortHelp: "A language server for CEL (Common Expression Language)",
+		Exec: func(_ context.Context, _ *cli.State) error {
+			fmt.Println(cli.DefaultUsage(root))
+			return nil
+		},
 		SubCommands: []*cli.Command{
 			{
 				Name:      "serve",
 				ShortHelp: "Start the CEL language server (communicates over stdin/stdout)",
-				Exec: func(ctx context.Context, s *cli.State) error {
+				Exec: func(_ context.Context, _ *cli.State) error {
 					return lsp.Serve()
 				},
 			},

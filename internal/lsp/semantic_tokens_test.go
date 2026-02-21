@@ -593,3 +593,105 @@ func TestEdgeSelectOnCall(t *testing.T) {
 		{0, 10, 4, stMethod, "'size' method"},
 	})
 }
+
+// findTokenOnLine checks that at least one token of the given type exists on the given line.
+func findTokenOnLine(tokens []semanticToken, line, tokenType uint32) bool {
+	return slices.ContainsFunc(tokens, func(token semanticToken) bool {
+		return token.line == line && token.tokenType == tokenType
+	})
+}
+
+func TestSemanticTokensComprehensive(t *testing.T) {
+	t.Parallel()
+	tokens := getSemanticTokens(t, "testdata/semantic_tokens/comprehensive.cel")
+
+	// The comprehensive file is 121 lines with comments and exercises every feature.
+	// There should be a significant number of tokens.
+	if len(tokens) < 80 {
+		t.Fatalf("expected at least 80 semantic tokens, got %d", len(tokens))
+	}
+
+	// Spot-check specific token types on specific lines (0-indexed).
+	// Line 7: (x + y) * 2 - z / w % 3 >= 10 &&
+	be.True(t, findTokenOnLine(tokens, 7, stOperator))
+	be.True(t, findTokenOnLine(tokens, 7, stNumber))
+
+	// Line 10: "hello world".contains("world") &&
+	be.True(t, findTokenOnLine(tokens, 10, stString))
+	be.True(t, findTokenOnLine(tokens, 10, stMethod))
+
+	// Line 11: "hello".startsWith("he") &&
+	be.True(t, findTokenOnLine(tokens, 11, stMethod))
+
+	// Line 14: size("test") == 4 &&
+	be.True(t, findTokenOnLine(tokens, 14, stFunction))
+
+	// Line 17: int("42") + double("3.14") > 0.0 &&
+	be.True(t, findTokenOnLine(tokens, 17, stType))
+
+	// Line 20: bool("true") == true &&
+	be.True(t, findTokenOnLine(tokens, 20, stKeyword))
+
+	// Line 33: has({"field": true}.field) &&
+	be.True(t, findTokenOnLine(tokens, 33, stMacro))
+
+	// Line 36: "a" in ["a", "b", "c"] &&
+	be.True(t, findTokenOnLine(tokens, 36, stOperator))
+
+	// Line 40: [1, 2, 3].all(i, i > 0) &&
+	be.True(t, findTokenOnLine(tokens, 40, stMacro))
+
+	// Line 43: [1, 2, 3].exists(i, i == 2) &&
+	be.True(t, findTokenOnLine(tokens, 43, stMacro))
+
+	// Line 46: [1, 2, 3].exists_one(i, i > 2) &&
+	be.True(t, findTokenOnLine(tokens, 46, stMacro))
+
+	// Line 49: [1, 2, 3].map(i, i * 2) == [2, 4, 6] &&
+	be.True(t, findTokenOnLine(tokens, 49, stMacro))
+
+	// Line 52: [1, 2, 3, 4, 5].filter(i, i > 3) == [4, 5] &&
+	be.True(t, findTokenOnLine(tokens, 52, stMacro))
+
+	// Line 55: nested macros
+	be.True(t, findTokenOnLine(tokens, 55, stMacro))
+
+	// Line 58: ternary
+	be.True(t, findTokenOnLine(tokens, 58, stOperator))
+
+	// Line 62: true || false &&
+	be.True(t, findTokenOnLine(tokens, 62, stKeyword))
+
+	// Line 73: !false &&
+	be.True(t, findTokenOnLine(tokens, 73, stKeyword))
+
+	// Line 81: null == null &&
+	be.True(t, findTokenOnLine(tokens, 81, stKeyword))
+
+	// Line 84: b"hello" == bytes("hello") &&
+	be.True(t, findTokenOnLine(tokens, 84, stString))
+
+	// Line 91: "Hello World".endsWith("World") &&
+	be.True(t, findTokenOnLine(tokens, 91, stMethod))
+
+	// Line 96: multi-line comprehension filter
+	be.True(t, findTokenOnLine(tokens, 96, stMacro))
+
+	// Line 102: duration("1h") > duration("30m") &&
+	be.True(t, findTokenOnLine(tokens, 102, stType))
+
+	// Line 103: timestamp type conversion
+	be.True(t, findTokenOnLine(tokens, 103, stType))
+
+	// Line 120: x + y == z
+	be.True(t, findTokenOnLine(tokens, 120, stOperator))
+
+	// Verify all major token types are present across the file.
+	typesSeen := make(map[uint32]bool)
+	for _, tok := range tokens {
+		typesSeen[tok.tokenType] = true
+	}
+	for _, expected := range []uint32{stOperator, stNumber, stString, stMethod, stFunction, stType, stMacro, stKeyword, stVariable} {
+		be.True(t, typesSeen[expected])
+	}
+}

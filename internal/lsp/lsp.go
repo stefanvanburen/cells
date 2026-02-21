@@ -81,6 +81,8 @@ func (s *server) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.
 		return nil, s.didChange(req)
 	case "textDocument/didClose":
 		return nil, s.didClose(req)
+	case "textDocument/hover":
+		return s.hover(req)
 	case "textDocument/semanticTokens/full":
 		return s.semanticTokensFull(req)
 	default:
@@ -98,6 +100,7 @@ func (s *server) initialize(req *jsonrpc2.Request) (any, error) {
 				OpenClose: true,
 				Change:    protocol.Full,
 			},
+			HoverProvider: &protocol.Or_ServerCapabilities_hoverProvider{Value: true},
 			SemanticTokensProvider: protocol.SemanticTokensOptions{
 				Legend: protocol.SemanticTokensLegend{
 					TokenTypes:     semanticTypeLegend,

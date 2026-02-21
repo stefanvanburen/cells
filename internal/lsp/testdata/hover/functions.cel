@@ -1,0 +1,1 @@
+size("hello") + int("42")
