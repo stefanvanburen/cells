@@ -1,0 +1,1 @@
+has(x.field) && [1, 2, 3].all(n, n > 0) && x.exists(i, i == 'test')
