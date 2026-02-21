@@ -87,6 +87,8 @@ func (s *server) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.
 		return s.diagnosticFull(req)
 	case "textDocument/semanticTokens/full":
 		return s.semanticTokensFull(req)
+	case "textDocument/formatting":
+		return s.formatting(req)
 	default:
 		return nil, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
@@ -103,6 +105,7 @@ func (s *server) initialize(req *jsonrpc2.Request) (any, error) {
 				Change:    protocol.Full,
 			},
 			HoverProvider: &protocol.Or_ServerCapabilities_hoverProvider{Value: true},
+			DocumentFormattingProvider: &protocol.Or_ServerCapabilities_documentFormattingProvider{Value: true},
 			CompletionProvider: &protocol.CompletionOptions{
 				TriggerCharacters: []string{"."},
 			},
