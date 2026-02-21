@@ -41,7 +41,6 @@ func ServeStream(ctx context.Context, rwc io.ReadWriteCloser) error {
 	}
 
 	conn := jsonrpc2.NewConn(ctx, rwc, jsonrpc2.HandlerFunc(s.handle))
-	s.conn = conn
 	<-conn.DisconnectNotify()
 	return nil
 }
@@ -49,7 +48,6 @@ func ServeStream(ctx context.Context, rwc io.ReadWriteCloser) error {
 // server holds all of the LSP server's mutable state.
 type server struct {
 	mu     sync.Mutex
-	conn   *jsonrpc2.Conn
 	files  map[protocol.DocumentURI]*file
 	celEnv *cel.Env
 }
@@ -76,13 +74,15 @@ func (s *server) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.
 	case "exit":
 		return nil, conn.Close()
 	case "textDocument/didOpen":
-		return nil, s.didOpen(req)
+		return nil, s.didOpen(ctx, conn, req)
 	case "textDocument/didChange":
-		return nil, s.didChange(req)
+		return nil, s.didChange(ctx, conn, req)
 	case "textDocument/didClose":
 		return nil, s.didClose(req)
 	case "textDocument/hover":
 		return s.hover(req)
+	case "textDocument/diagnostic":
+		return s.diagnosticFull(req)
 	case "textDocument/semanticTokens/full":
 		return s.semanticTokensFull(req)
 	default:
@@ -115,34 +115,36 @@ func (s *server) initialize(req *jsonrpc2.Request) (any, error) {
 	}, nil
 }
 
-func (s *server) didOpen(req *jsonrpc2.Request) error {
+func (s *server) didOpen(_ context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) error {
 	var params protocol.DidOpenTextDocumentParams
 	if err := json.Unmarshal(*req.Params, &params); err != nil {
 		return err
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	s.files[params.TextDocument.URI] = &file{
+	f := &file{
 		uri:     params.TextDocument.URI,
 		version: params.TextDocument.Version,
 		content: params.TextDocument.Text,
 	}
+	s.files[params.TextDocument.URI] = f
+	uri, version, content := f.uri, f.version, f.content
+	s.mu.Unlock()
+
+	publishDiagnostics(conn, uri, version, content, s.celEnv)
 	return nil
 }
 
-func (s *server) didChange(req *jsonrpc2.Request) error {
+func (s *server) didChange(_ context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.Request) error {
 	var params protocol.DidChangeTextDocumentParams
 	if err := json.Unmarshal(*req.Params, &params); err != nil {
 		return err
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	f := s.files[params.TextDocument.TextDocumentIdentifier.URI]
 	if f == nil {
+		s.mu.Unlock()
 		return fmt.Errorf("received update for file that was not open: %q", params.TextDocument.TextDocumentIdentifier.URI)
 	}
 	f.version = params.TextDocument.Version
@@ -155,8 +157,16 @@ func (s *server) didChange(req *jsonrpc2.Request) error {
 			f.content = v.Text
 		case *protocol.TextDocumentContentChangeWholeDocument:
 			f.content = v.Text
+		case protocol.TextDocumentContentChangePartial:
+			f.content = v.Text
+		case *protocol.TextDocumentContentChangePartial:
+			f.content = v.Text
 		}
 	}
+	uri, version, content := f.uri, f.version, f.content
+	s.mu.Unlock()
+
+	publishDiagnostics(conn, uri, version, content, s.celEnv)
 	return nil
 }
 

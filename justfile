@@ -21,3 +21,7 @@ fmt:
 
 # Run lint and test.
 check: lint test
+
+# Install the cells binary.
+install:
+    go install ./cmd/cells/...
