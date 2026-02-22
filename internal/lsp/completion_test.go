@@ -4,7 +4,6 @@ import (
 	"context"
 	"net"
 	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"testing"
@@ -19,54 +18,14 @@ import (
 // Returns the client connection, document URI, and file content.
 func setupCompletionServer(t *testing.T, celFile string) (*jsonrpc2.Conn, protocol.DocumentURI, string) {
 	t.Helper()
-	ctx := t.Context()
 
-	testPath, err := filepath.Abs(celFile)
-	if err != nil {
-		t.Fatalf("filepath.Abs: %v", err)
-	}
-
-	serverConn, clientConn := net.Pipe()
-	t.Cleanup(func() {
-		_ = serverConn.Close()
-		_ = clientConn.Close()
-	})
-
-	go func() {
-		_ = lsp.ServeStream(ctx, serverConn)
-	}()
-
-	noop := jsonrpc2.HandlerFunc(func(_ context.Context, _ *jsonrpc2.Conn, _ *jsonrpc2.Request) (any, error) {
-		return nil, nil
-	})
-	clientRPC := jsonrpc2.NewConn(ctx, clientConn, noop)
-	t.Cleanup(func() {
-		_ = clientRPC.Close()
-	})
-
-	testURI := protocol.URIFromPath(testPath)
-
-	var initResult protocol.InitializeResult
-	err = clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
-	be.Err(t, err, nil)
-
-	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})
-	be.Err(t, err, nil)
+	testPath := getAbsPath(t, celFile)
+	clientConn, testURI := setupLSPServer(t, testPath)
 
 	content, err := os.ReadFile(testPath)
 	be.Err(t, err, nil)
 
-	err = clientRPC.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
-		TextDocument: protocol.TextDocumentItem{
-			URI:        testURI,
-			LanguageID: "cel",
-			Version:    1,
-			Text:       string(content),
-		},
-	})
-	be.Err(t, err, nil)
-
-	return clientRPC, testURI, string(content)
+	return clientConn, testURI, string(content)
 }
 
 // dotPosition returns the position right after the last dot in the content.
@@ -118,9 +77,7 @@ func requestCompletion(t *testing.T, conn *jsonrpc2.Conn, uri protocol.DocumentU
 			TriggerCharacter: triggerChar,
 		},
 	}, &result)
-	if err != nil {
-		t.Fatalf("textDocument/completion call failed: %v", err)
-	}
+	be.Err(t, err, nil)
 	return &result
 }
 
@@ -243,11 +200,8 @@ func TestCompletionDotUnknownReceiver(t *testing.T) {
 	t.Parallel()
 	result := requestDotCompletion(t, "testdata/completion/unknown_receiver.cel")
 
-	labels := completionLabels(result.Items)
 	for _, want := range []string{"contains", "startsWith", "getFullYear", "size"} {
-		if !containsLabel(result.Items, want) {
-			t.Errorf("expected %q in unknown-receiver fallback, got %v", want, labels)
-		}
+		be.True(t, containsLabel(result.Items, want))
 	}
 }
 
@@ -267,9 +221,7 @@ func TestCompletionInvokedAtDot(t *testing.T) {
 	}
 
 	for _, absent := range []string{"timestamp", "int", "duration", "dyn", "true"} {
-		if containsLabel(result.Items, absent) {
-			t.Errorf("did not expect %q in invoked-at-dot completions", absent)
-		}
+		be.True(t, !containsLabel(result.Items, absent))
 	}
 }
 
@@ -310,17 +262,13 @@ func TestCompletionInvoked(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.label, func(t *testing.T) {
 			item := findCompletionItem(result.Items, tt.label)
-			if item == nil {
-				t.Fatalf("expected %q in invoked completions", tt.label)
-			}
+			be.True(t, item != nil)
 			be.Equal(t, item.Kind, tt.kind)
 		})
 	}
 
 	for _, absent := range []string{"contains", "startsWith", "endsWith", "getFullYear", "getMonth", "getHours"} {
-		if containsLabel(result.Items, absent) {
-			t.Errorf("did not expect member-only %q in invoked completions", absent)
-		}
+		be.True(t, !containsLabel(result.Items, absent))
 	}
 }
 
@@ -363,16 +311,11 @@ func TestCompletionAfterOperator(t *testing.T) {
 			t.Parallel()
 			result := requestInvokedAtEnd(t, tt.file)
 
-			labels := completionLabels(result.Items)
 			for _, want := range tt.wantPresent {
-				if !containsLabel(result.Items, want) {
-					t.Errorf("expected %q in completions, got %v", want, labels)
-				}
+				be.True(t, containsLabel(result.Items, want))
 			}
 			for _, absent := range tt.wantAbsent {
-				if containsLabel(result.Items, absent) {
-					t.Errorf("did not expect %q in completions after operator", absent)
-				}
+				be.True(t, !containsLabel(result.Items, absent))
 			}
 		})
 	}
@@ -509,32 +452,22 @@ func TestCompletionItemProperties(t *testing.T) {
 			}
 
 			item := findCompletionItem(result.Items, tt.label)
-			if item == nil {
-				t.Fatalf("expected %q in completions", tt.label)
-			}
+			be.True(t, item != nil)
 
 			be.Equal(t, item.Kind, tt.wantKind)
 			be.Equal(t, item.InsertText, tt.wantInsertText)
 
 			if tt.wantSnippet {
-				if item.InsertTextFormat == nil {
-					t.Fatal("expected snippet insert text format")
-				}
+				be.True(t, item.InsertTextFormat != nil)
 				be.Equal(t, *item.InsertTextFormat, protocol.SnippetTextFormat)
 			} else {
-				if item.InsertTextFormat != nil {
-					t.Fatalf("did not expect insert text format for %q", tt.label)
-				}
+				be.True(t, item.InsertTextFormat == nil)
 			}
 
 			if tt.wantDoc {
-				if item.Documentation == nil {
-					t.Fatalf("expected documentation for %q", tt.label)
-				}
+				be.True(t, item.Documentation != nil)
 			} else {
-				if item.Documentation != nil {
-					t.Fatalf("did not expect documentation for %q", tt.label)
-				}
+				be.True(t, item.Documentation == nil)
 			}
 		})
 	}
@@ -567,9 +500,7 @@ func TestCompletionNoOperators(t *testing.T) {
 		t.Parallel()
 		result := requestInvokedCompletion(t, "testdata/completion/invoked.cel")
 		for _, op := range operators {
-			if containsLabel(result.Items, op) {
-				t.Errorf("did not expect operator %q in invoked completions", op)
-			}
+			be.True(t, !containsLabel(result.Items, op))
 		}
 	})
 
@@ -577,9 +508,7 @@ func TestCompletionNoOperators(t *testing.T) {
 		t.Parallel()
 		result := requestDotCompletion(t, "testdata/completion/string_receiver.cel")
 		for _, op := range operators {
-			if containsLabel(result.Items, op) {
-				t.Errorf("did not expect operator %q in dot completions", op)
-			}
+			be.True(t, !containsLabel(result.Items, op))
 		}
 	})
 }

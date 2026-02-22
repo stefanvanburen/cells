@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"net"
-	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -21,49 +20,7 @@ import (
 // a client connection and the document URI.
 func setupDiagServer(t *testing.T, testFilePath string) (*jsonrpc2.Conn, protocol.DocumentURI) {
 	t.Helper()
-	ctx := t.Context()
-
-	serverConn, clientConn := net.Pipe()
-	t.Cleanup(func() {
-		_ = serverConn.Close()
-		_ = clientConn.Close()
-	})
-
-	go func() {
-		_ = lsp.ServeStream(ctx, serverConn)
-	}()
-
-	noop := jsonrpc2.HandlerFunc(func(_ context.Context, _ *jsonrpc2.Conn, _ *jsonrpc2.Request) (any, error) {
-		return nil, nil
-	})
-	clientRPC := jsonrpc2.NewConn(ctx, clientConn, noop)
-	t.Cleanup(func() {
-		_ = clientRPC.Close()
-	})
-
-	testURI := protocol.URIFromPath(testFilePath)
-
-	var initResult protocol.InitializeResult
-	err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
-	be.Err(t, err, nil)
-
-	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})
-	be.Err(t, err, nil)
-
-	content, err := os.ReadFile(testFilePath)
-	be.Err(t, err, nil)
-
-	err = clientRPC.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
-		TextDocument: protocol.TextDocumentItem{
-			URI:        testURI,
-			LanguageID: "cel",
-			Version:    1,
-			Text:       string(content),
-		},
-	})
-	be.Err(t, err, nil)
-
-	return clientRPC, testURI
+	return setupLSPServer(t, testFilePath)
 }
 
 // pullDiagnostics sends a textDocument/diagnostic request and returns the items.
@@ -140,17 +97,12 @@ func TestDiagnosticsParseErrors(t *testing.T) {
 			conn, uri := openDiagFile(t, tt.file)
 			diags := pullDiagnostics(t, conn, uri)
 
-			if len(diags) == 0 {
-				t.Fatalf("expected parse errors for %s, got none", tt.file)
-			}
+			be.True(t, len(diags) > 0)
 			for _, d := range diags {
 				be.Equal(t, d.Severity, protocol.SeverityError)
 				be.Equal(t, d.Source, "cells")
 			}
-			if !containsSubstring(diagMessages(diags), tt.wantContain) {
-				t.Fatalf("expected diagnostic containing %q in %s, got %v",
-					tt.wantContain, tt.file, diagMessages(diags))
-			}
+			be.True(t, containsSubstring(diagMessages(diags), tt.wantContain))
 		})
 	}
 }
@@ -242,9 +194,7 @@ func TestDiagnosticsTypeCheckErrors(t *testing.T) {
 			conn, uri := openDiagFile(t, tt.file)
 			diags := pullDiagnostics(t, conn, uri)
 
-			if len(diags) == 0 {
-				t.Fatalf("expected type-check errors for %s, got none", tt.file)
-			}
+			be.True(t, len(diags) > 0)
 			for _, d := range diags {
 				be.Equal(t, d.Severity, protocol.SeverityWarning)
 				be.Equal(t, d.Source, "cells")
@@ -253,15 +203,10 @@ func TestDiagnosticsTypeCheckErrors(t *testing.T) {
 				be.Equal(t, len(diags), tt.wantCount)
 			}
 			msgs := diagMessages(diags)
-			if !containsSubstring(msgs, tt.wantContain) {
-				t.Fatalf("expected diagnostic containing %q in %s, got %v",
-					tt.wantContain, tt.file, msgs)
-			}
+			be.True(t, containsSubstring(msgs, tt.wantContain))
 			if tt.wantNot != "" {
 				for _, msg := range msgs {
-					if strings.Contains(msg, tt.wantNot) {
-						t.Fatalf("did not expect %q in message %q", tt.wantNot, msg)
-					}
+					be.True(t, !strings.Contains(msg, tt.wantNot))
 				}
 			}
 		})
@@ -334,10 +279,7 @@ func TestDiagnosticsClean(t *testing.T) {
 			conn, uri := openDiagFile(t, tt.file)
 			diags := pullDiagnostics(t, conn, uri)
 
-			if len(diags) > 0 {
-				t.Fatalf("expected no diagnostics for %s, got %d: %v",
-					tt.file, len(diags), diagMessages(diags))
-			}
+			be.True(t, len(diags) == 0)
 		})
 	}
 }
@@ -444,15 +386,9 @@ func TestDiagnosticsMultipleUndeclared(t *testing.T) {
 	be.Equal(t, len(diags), 3)
 
 	messages := diagMessages(diags)
-	if !containsSubstring(messages, "'x'") {
-		t.Fatalf("expected 'x' in %v", messages)
-	}
-	if !containsSubstring(messages, "'y'") {
-		t.Fatalf("expected 'y' in %v", messages)
-	}
-	if !containsSubstring(messages, "'z'") {
-		t.Fatalf("expected 'z' in %v", messages)
-	}
+	be.True(t, containsSubstring(messages, "'x'"))
+	be.True(t, containsSubstring(messages, "'y'"))
+	be.True(t, containsSubstring(messages, "'z'"))
 
 	be.Equal(t, diags[0].Range.Start.Character, uint32(0)) // x
 	be.Equal(t, diags[1].Range.Start.Character, uint32(4)) // y
@@ -598,7 +534,8 @@ func (dc *diagnosticCollector) waitForDiagnostics(t *testing.T, n int) {
 		select {
 		case <-dc.ch:
 		case <-deadline:
-			t.Fatalf("timed out waiting for %d diagnostics notifications, got %d", n, got)
+			be.Equal(t, got, n)
+			return
 		}
 	}
 }

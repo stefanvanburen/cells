@@ -1,10 +1,10 @@
 package lsp_test
 
 import (
-	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/nalgeon/be"
 	"github.com/stefanvanburen/cells/internal/lsp/protocol"
 )
 
@@ -12,14 +12,11 @@ import (
 func getHover(t *testing.T, celFile string, line, character uint32) *protocol.Hover {
 	t.Helper()
 	ctx := t.Context()
-	testPath, err := filepath.Abs(celFile)
-	if err != nil {
-		t.Fatalf("filepath.Abs: %v", err)
-	}
+	testPath := getAbsPath(t, celFile)
 	clientConn, testURI := setupLSPServer(t, testPath)
 
 	var result *protocol.Hover
-	err = clientConn.Call(ctx, "textDocument/hover", protocol.HoverParams{
+	err := clientConn.Call(ctx, "textDocument/hover", protocol.HoverParams{
 		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
 			TextDocument: protocol.TextDocumentIdentifier{
 				URI: testURI,
@@ -30,9 +27,7 @@ func getHover(t *testing.T, celFile string, line, character uint32) *protocol.Ho
 			},
 		},
 	}, &result)
-	if err != nil {
-		t.Fatalf("textDocument/hover call failed: %v", err)
-	}
+	be.Err(t, err, nil)
 	return result
 }
 
@@ -40,24 +35,16 @@ func getHover(t *testing.T, celFile string, line, character uint32) *protocol.Ho
 func requireHoverContains(t *testing.T, celFile string, line, character uint32, substr string, desc string) {
 	t.Helper()
 	result := getHover(t, celFile, line, character)
-	if result == nil {
-		t.Fatalf("%s: expected hover, got nil", desc)
-	}
-	if result.Contents.Kind != protocol.Markdown {
-		t.Fatalf("%s: expected markdown, got %q", desc, result.Contents.Kind)
-	}
-	if !strings.Contains(result.Contents.Value, substr) {
-		t.Errorf("%s: hover text %q does not contain %q", desc, result.Contents.Value, substr)
-	}
+	be.True(t, result != nil)
+	be.Equal(t, result.Contents.Kind, protocol.Markdown)
+	be.True(t, strings.Contains(result.Contents.Value, substr))
 }
 
 // requireNoHover asserts that hover at (line, char) returns nil.
 func requireNoHover(t *testing.T, celFile string, line, character uint32, desc string) {
 	t.Helper()
 	result := getHover(t, celFile, line, character)
-	if result != nil {
-		t.Errorf("%s: expected no hover, got: %q", desc, result.Contents.Value)
-	}
+	be.True(t, result == nil)
 }
 
 func TestHoverOperators(t *testing.T) {

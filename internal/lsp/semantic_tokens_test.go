@@ -1,71 +1,14 @@
 package lsp_test
 
 import (
-	"context"
-	"net"
-	"os"
-	"path/filepath"
 	"slices"
 	"testing"
 
 	"github.com/nalgeon/be"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp"
 	"github.com/stefanvanburen/cells/internal/lsp/protocol"
 )
 
-// setupLSPServer creates and initializes an LSP server for testing.
-// Returns the client JSON-RPC connection and the test file URI.
-func setupLSPServer(t *testing.T, testFilePath string) (*jsonrpc2.Conn, protocol.DocumentURI) {
-	t.Helper()
-	ctx := t.Context()
 
-	// Create a pipe — server reads/writes one end, client the other.
-	serverConn, clientConn := net.Pipe()
-	t.Cleanup(func() {
-		_ = serverConn.Close()
-		_ = clientConn.Close()
-	})
-
-	// Run the LSP server on the server side of the pipe.
-	go func() {
-		_ = lsp.ServeStream(ctx, serverConn)
-	}()
-
-	// Create a client connection on the client side.
-	noop := jsonrpc2.HandlerFunc(func(_ context.Context, _ *jsonrpc2.Conn, _ *jsonrpc2.Request) (any, error) {
-		return nil, nil
-	})
-	clientRPC := jsonrpc2.NewConn(ctx, clientConn, noop)
-	t.Cleanup(func() {
-		_ = clientRPC.Close()
-	})
-
-	testURI := protocol.URIFromPath(testFilePath)
-
-	var initResult protocol.InitializeResult
-	err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
-	be.Err(t, err, nil)
-	be.True(t, initResult.Capabilities.SemanticTokensProvider != nil)
-
-	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})
-	be.Err(t, err, nil)
-
-	content, err := os.ReadFile(testFilePath)
-	be.Err(t, err, nil)
-
-	err = clientRPC.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
-		TextDocument: protocol.TextDocumentItem{
-			URI:        testURI,
-			LanguageID: "cel",
-			Version:    1,
-			Text:       string(content),
-		},
-	})
-	be.Err(t, err, nil)
-
-	return clientRPC, testURI
-}
 
 // semanticToken represents a decoded semantic token for easier testing.
 type semanticToken struct {
@@ -145,37 +88,29 @@ type expectedToken struct {
 func getSemanticTokens(t *testing.T, celFile string) []semanticToken {
 	t.Helper()
 	ctx := t.Context()
-	testPath, err := filepath.Abs(celFile)
-	be.Err(t, err, nil)
+	testPath := getAbsPath(t, celFile)
 	clientConn, testURI := setupLSPServer(t, testPath)
 
 	var result *protocol.SemanticTokens
-	err = clientConn.Call(ctx, "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
+	err := clientConn.Call(ctx, "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
 		TextDocument: protocol.TextDocumentIdentifier{
 			URI: testURI,
 		},
 	}, &result)
-	if err != nil {
-		t.Fatalf("semanticTokens/full call failed: %v", err)
-	}
-	if result == nil {
-		t.Fatal("semanticTokens/full returned nil result")
-	}
-	if len(result.Data) == 0 {
-		t.Fatal("semanticTokens/full returned empty data")
-	}
+	be.Err(t, err, nil)
+	be.True(t, result != nil)
+	be.True(t, len(result.Data) > 0)
 	return decodeSemanticTokens(result.Data)
 }
 
 func getNilSemanticTokens(t *testing.T, celFile string) {
 	t.Helper()
 	ctx := t.Context()
-	testPath, err := filepath.Abs(celFile)
-	be.Err(t, err, nil)
+	testPath := getAbsPath(t, celFile)
 	clientConn, testURI := setupLSPServer(t, testPath)
 
 	var result *protocol.SemanticTokens
-	err = clientConn.Call(ctx, "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
+	err := clientConn.Call(ctx, "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
 		TextDocument: protocol.TextDocumentIdentifier{
 			URI: testURI,
 		},
@@ -607,9 +542,7 @@ func TestSemanticTokensComprehensive(t *testing.T) {
 
 	// The comprehensive file is 121 lines with comments and exercises every feature.
 	// There should be a significant number of tokens.
-	if len(tokens) < 80 {
-		t.Fatalf("expected at least 80 semantic tokens, got %d", len(tokens))
-	}
+	be.True(t, len(tokens) >= 80)
 
 	// Spot-check specific token types on specific lines (0-indexed).
 	// Line 7: (x + y) * 2 - z / w % 3 >= 10 &&

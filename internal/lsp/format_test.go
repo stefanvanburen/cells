@@ -18,9 +18,7 @@ func TestFormat(t *testing.T) {
 	t.Parallel()
 
 	entries, err := os.ReadDir("testdata/format")
-	if err != nil {
-		t.Fatalf("reading testdata/format: %v", err)
-	}
+	be.Err(t, err, nil)
 
 	// Collect test cases from *.input.cel / *.golden.cel pairs.
 	type testCase struct {
@@ -52,15 +50,11 @@ func TestFormat(t *testing.T) {
 			t.Parallel()
 
 			golden, err := os.ReadFile(tt.golden)
-			if err != nil {
-				t.Fatalf("reading golden file: %v", err)
-			}
+			be.Err(t, err, nil)
 
 			edits := requestFormatting(t, tt.input)
 			input, err := os.ReadFile(tt.input)
-			if err != nil {
-				t.Fatalf("reading input file: %v", err)
-			}
+			be.Err(t, err, nil)
 
 			got := applyEdits(string(input), edits)
 			be.Equal(t, got, string(golden))
@@ -109,53 +103,11 @@ func requestFormatting(t *testing.T, celFile string) []protocol.TextEdit {
 	t.Helper()
 	ctx := t.Context()
 
-	testPath, err := filepath.Abs(celFile)
-	if err != nil {
-		t.Fatalf("filepath.Abs: %v", err)
-	}
-
-	serverConn, clientConn := net.Pipe()
-	t.Cleanup(func() {
-		_ = serverConn.Close()
-		_ = clientConn.Close()
-	})
-
-	go func() {
-		_ = lsp.ServeStream(ctx, serverConn)
-	}()
-
-	noop := jsonrpc2.HandlerFunc(func(_ context.Context, _ *jsonrpc2.Conn, _ *jsonrpc2.Request) (any, error) {
-		return nil, nil
-	})
-	clientRPC := jsonrpc2.NewConn(ctx, clientConn, noop)
-	t.Cleanup(func() {
-		_ = clientRPC.Close()
-	})
-
-	testURI := protocol.URIFromPath(testPath)
-
-	var initResult protocol.InitializeResult
-	err = clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
-	be.Err(t, err, nil)
-
-	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})
-	be.Err(t, err, nil)
-
-	content, err := os.ReadFile(testPath)
-	be.Err(t, err, nil)
-
-	err = clientRPC.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
-		TextDocument: protocol.TextDocumentItem{
-			URI:        testURI,
-			LanguageID: "cel",
-			Version:    1,
-			Text:       string(content),
-		},
-	})
-	be.Err(t, err, nil)
+	testPath := getAbsPath(t, celFile)
+	clientConn, testURI := setupLSPServer(t, testPath)
 
 	var edits []protocol.TextEdit
-	err = clientRPC.Call(ctx, "textDocument/formatting", protocol.DocumentFormattingParams{
+	err := clientConn.Call(ctx, "textDocument/formatting", protocol.DocumentFormattingParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: testURI},
 		Options: protocol.FormattingOptions{
 			TabSize:      2,

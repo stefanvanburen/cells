@@ -3,8 +3,6 @@ package lsp_test
 import (
 	"context"
 	"net"
-	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 
@@ -14,57 +12,7 @@ import (
 	"github.com/stefanvanburen/cells/internal/lsp/protocol"
 )
 
-// setupSignatureServer initializes an LSP server and opens celFile for signature help testing.
-// Returns the client connection and document URI.
-func setupSignatureServer(t *testing.T, celFile string) (*jsonrpc2.Conn, protocol.DocumentURI) {
-	t.Helper()
-	ctx := t.Context()
 
-	testPath, err := filepath.Abs(celFile)
-	be.Err(t, err, nil)
-
-	serverConn, clientConn := net.Pipe()
-	t.Cleanup(func() {
-		_ = serverConn.Close()
-		_ = clientConn.Close()
-	})
-
-	go func() {
-		_ = lsp.ServeStream(ctx, serverConn)
-	}()
-
-	noop := jsonrpc2.HandlerFunc(func(_ context.Context, _ *jsonrpc2.Conn, _ *jsonrpc2.Request) (any, error) {
-		return nil, nil
-	})
-	clientRPC := jsonrpc2.NewConn(ctx, clientConn, noop)
-	t.Cleanup(func() {
-		_ = clientRPC.Close()
-	})
-
-	testURI := protocol.URIFromPath(testPath)
-
-	var initResult protocol.InitializeResult
-	err = clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
-	be.Err(t, err, nil)
-
-	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})
-	be.Err(t, err, nil)
-
-	content, err := os.ReadFile(testPath)
-	be.Err(t, err, nil)
-
-	err = clientRPC.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
-		TextDocument: protocol.TextDocumentItem{
-			URI:        testURI,
-			LanguageID: "cel",
-			Version:    1,
-			Text:       string(content),
-		},
-	})
-	be.Err(t, err, nil)
-
-	return clientRPC, testURI
-}
 
 // requestSignatureHelp sends a textDocument/signatureHelp request at the given position.
 func requestSignatureHelp(t *testing.T, conn *jsonrpc2.Conn, uri protocol.DocumentURI, pos protocol.Position) *protocol.SignatureHelp {
@@ -76,9 +24,7 @@ func requestSignatureHelp(t *testing.T, conn *jsonrpc2.Conn, uri protocol.Docume
 			Position:     pos,
 		},
 	}, &result)
-	if err != nil {
-		t.Fatalf("textDocument/signatureHelp call failed: %v", err)
-	}
+	be.Err(t, err, nil)
 	return result
 }
 
@@ -160,7 +106,8 @@ func TestSignatureHelp(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			conn, uri := setupSignatureServer(t, tc.file)
+			testPath := getAbsPath(t, tc.file)
+			conn, uri := setupLSPServer(t, testPath)
 			sig := requestSignatureHelp(t, conn, uri, tc.pos)
 
 			if !tc.wantSignatures {
@@ -168,10 +115,7 @@ func TestSignatureHelp(t *testing.T) {
 				return
 			}
 
-			if sig == nil {
-				t.Fatal("expected signature help, got nil")
-			}
-
+			be.True(t, sig != nil)
 			be.True(t, len(sig.Signatures) > 0)
 
 			if tc.wantExactLabel != "" {
