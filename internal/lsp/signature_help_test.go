@@ -12,8 +12,6 @@ import (
 	"github.com/stefanvanburen/cells/internal/lsp/protocol"
 )
 
-
-
 // requestSignatureHelp sends a textDocument/signatureHelp request at the given position.
 func requestSignatureHelp(t *testing.T, conn *jsonrpc2.Conn, uri protocol.DocumentURI, pos protocol.Position) *protocol.SignatureHelp {
 	t.Helper()

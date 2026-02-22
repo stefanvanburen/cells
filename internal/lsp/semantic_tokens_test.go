@@ -8,8 +8,6 @@ import (
 	"github.com/stefanvanburen/cells/internal/lsp/protocol"
 )
 
-
-
 // semanticToken represents a decoded semantic token for easier testing.
 type semanticToken struct {
 	line      uint32
