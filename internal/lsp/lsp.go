@@ -89,6 +89,8 @@ func (s *server) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.
 		return s.semanticTokensFull(req)
 	case "textDocument/formatting":
 		return s.formatting(req)
+	case "textDocument/signatureHelp":
+		return s.signatureHelp(req)
 	default:
 		return nil, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
@@ -115,6 +117,9 @@ func (s *server) initialize(req *jsonrpc2.Request) (any, error) {
 					TokenModifiers: semanticModifierLegend,
 				},
 				Full: &protocol.Or_SemanticTokensOptions_full{Value: true},
+			},
+			SignatureHelpProvider: &protocol.SignatureHelpOptions{
+				TriggerCharacters: []string{"(", ","},
 			},
 		},
 		ServerInfo: &protocol.ServerInfo{
