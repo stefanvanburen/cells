@@ -477,12 +477,12 @@ func TestDiagnosticsOnChange(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name         string
-		startFile    string
-		startSev     protocol.DiagnosticSeverity // 0 means expect no diagnostics
-		changeText   string
-		changeSev    protocol.DiagnosticSeverity // 0 means expect no diagnostics
-		changeMsg    string                      // substring to check in changed diagnostics (if any)
+		name       string
+		startFile  string
+		startSev   protocol.DiagnosticSeverity // 0 means expect no diagnostics
+		changeText string
+		changeSev  protocol.DiagnosticSeverity // 0 means expect no diagnostics
+		changeMsg  string                      // substring to check in changed diagnostics (if any)
 	}{
 		{
 			name:       "clean to parse error to clean",

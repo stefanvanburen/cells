@@ -106,7 +106,7 @@ func (s *server) initialize(req *jsonrpc2.Request) (any, error) {
 				OpenClose: true,
 				Change:    protocol.Full,
 			},
-			HoverProvider: &protocol.Or_ServerCapabilities_hoverProvider{Value: true},
+			HoverProvider:              &protocol.Or_ServerCapabilities_hoverProvider{Value: true},
 			DocumentFormattingProvider: &protocol.Or_ServerCapabilities_documentFormattingProvider{Value: true},
 			CompletionProvider: &protocol.CompletionOptions{
 				TriggerCharacters: []string{"."},

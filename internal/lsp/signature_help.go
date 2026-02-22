@@ -89,15 +89,15 @@ func findCallAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, exprString st
 		if e.Kind() == ast.CallKind {
 			call := e.AsCall()
 			offsetRange, hasOffset := sourceInfo.GetOffsetRange(e.ID())
-			
+
 			// For a call expression, we want to find the opening paren and everything after.
 			// The offsetRange might just be the function name part.
 			if hasOffset {
 				byteStart, _ := celOffsetRangeToByteRange(exprString, offsetRange)
-				
+
 				// Find the opening paren from byteStart
 				parenIdx := strings.Index(exprString[byteStart:], "(")
-				
+
 				if parenIdx >= 0 {
 					// Extend the range to include the whole call (from opening paren to closing paren)
 					parenStart := byteStart + parenIdx
@@ -111,7 +111,7 @@ func findCallAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, exprString st
 						}
 						parenEnd++
 					}
-					
+
 					// Check if cursor is inside the parentheses
 					if targetOffset >= parenStart && targetOffset < parenEnd {
 						// Prefer more specific (smaller) ranges
