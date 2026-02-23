@@ -47,275 +47,150 @@ func requireNoHover(t *testing.T, celFile string, line, character uint32, desc s
 	be.True(t, result == nil)
 }
 
-func TestHoverOperators(t *testing.T) {
-	t.Parallel()
-	// x > 0 && y < 10
-	// 0123456789012345
-	f := "testdata/hover/operators.cel"
-
-	// Upstream descriptions from cel-go
-	requireHoverContains(t, f, 0, 2, "greater than", "'>' operator description")
-	requireHoverContains(t, f, 0, 2, "**Operator**: `>`", "'>' operator header")
-	requireHoverContains(t, f, 0, 2, "**Overloads**", "'>' has overloads")
-	requireHoverContains(t, f, 0, 6, "logically AND", "'&&' operator")
-	requireHoverContains(t, f, 0, 11, "less than", "'<' operator")
-
-	// Hover on an identifier — no hover
-	requireNoHover(t, f, 0, 0, "'x' identifier — no hover")
+type hoverTestCase struct {
+	name     string
+	file     string
+	line     uint32
+	char     uint32
+	contains string // empty string means expect no hover
+	desc     string
 }
 
-func TestHoverInOperator(t *testing.T) {
+func TestHover(t *testing.T) {
 	t.Parallel()
-	// "a" in ["a", "b", "c"]
-	// 0123456789
-	f := "testdata/hover/in_operator.cel"
 
-	requireHoverContains(t, f, 0, 4, "exists in a list", "'in' operator")
-	requireHoverContains(t, f, 0, 4, "**Operator**", "'in' has operator header")
-}
+	tests := []hoverTestCase{
+		// Operators tests
+		{name: "operators_greater_than", file: "testdata/hover/operators.cel", line: 0, char: 2, contains: "greater than", desc: "'>' operator description"},
+		{name: "operators_greater_than_header", file: "testdata/hover/operators.cel", line: 0, char: 2, contains: "**Operator**: `>`", desc: "'>' operator header"},
+		{name: "operators_greater_than_overloads", file: "testdata/hover/operators.cel", line: 0, char: 2, contains: "**Overloads**", desc: "'>' has overloads"},
+		{name: "operators_and", file: "testdata/hover/operators.cel", line: 0, char: 6, contains: "logically AND", desc: "'&&' operator"},
+		{name: "operators_less_than", file: "testdata/hover/operators.cel", line: 0, char: 11, contains: "less than", desc: "'<' operator"},
+		{name: "operators_no_hover_x", file: "testdata/hover/operators.cel", line: 0, char: 0, contains: "", desc: "'x' identifier — no hover"},
 
-func TestHoverLogicalOperators(t *testing.T) {
-	t.Parallel()
-	// !x && (y || z)
-	// 01234567890123
-	f := "testdata/hover/logical.cel"
+		// In operator tests
+		{name: "in_operator_exists", file: "testdata/hover/in_operator.cel", line: 0, char: 4, contains: "exists in a list", desc: "'in' operator"},
+		{name: "in_operator_header", file: "testdata/hover/in_operator.cel", line: 0, char: 4, contains: "**Operator**", desc: "'in' has operator header"},
 
-	requireHoverContains(t, f, 0, 0, "negate", "'!' unary operator")
-	requireHoverContains(t, f, 0, 3, "logically AND", "'&&' operator")
-	requireHoverContains(t, f, 0, 9, "logically OR", "'||' operator")
-}
+		// Logical operators tests
+		{name: "logical_negation", file: "testdata/hover/logical.cel", line: 0, char: 0, contains: "negate", desc: "'!' unary operator"},
+		{name: "logical_and", file: "testdata/hover/logical.cel", line: 0, char: 3, contains: "logically AND", desc: "'&&' operator"},
+		{name: "logical_or", file: "testdata/hover/logical.cel", line: 0, char: 9, contains: "logically OR", desc: "'||' operator"},
 
-func TestHoverArithmetic(t *testing.T) {
-	t.Parallel()
-	// -x + y * z / w % 2
-	// 0         1
-	// 0123456789012345678
-	f := "testdata/hover/arithmetic.cel"
+		// Arithmetic tests
+		{name: "arithmetic_unary_minus", file: "testdata/hover/arithmetic.cel", line: 0, char: 0, contains: "negate", desc: "unary '-'"},
+		{name: "arithmetic_plus", file: "testdata/hover/arithmetic.cel", line: 0, char: 3, contains: "adds two numeric", desc: "'+'"},
+		{name: "arithmetic_multiply", file: "testdata/hover/arithmetic.cel", line: 0, char: 7, contains: "multiply", desc: "'*'"},
+		{name: "arithmetic_divide", file: "testdata/hover/arithmetic.cel", line: 0, char: 11, contains: "divide", desc: "'/'"},
+		{name: "arithmetic_modulus", file: "testdata/hover/arithmetic.cel", line: 0, char: 15, contains: "modulus", desc: "'%'"},
 
-	requireHoverContains(t, f, 0, 0, "negate", "unary '-'")
-	requireHoverContains(t, f, 0, 3, "adds two numeric", "'+'")
-	requireHoverContains(t, f, 0, 7, "multiply", "'*'")
-	requireHoverContains(t, f, 0, 11, "divide", "'/'")
-	requireHoverContains(t, f, 0, 15, "modulus", "'%'")
-}
+		// Macros tests
+		{name: "macros_all_header", file: "testdata/hover/macros.cel", line: 0, char: 10, contains: "**Macro**: `all`", desc: "'all' macro header"},
+		{name: "macros_all_description", file: "testdata/hover/macros.cel", line: 0, char: 10, contains: "all elements", desc: "'all' macro description"},
+		{name: "macros_all_examples", file: "testdata/hover/macros.cel", line: 0, char: 10, contains: "**Examples**", desc: "'all' has examples"},
 
-func TestHoverMacros(t *testing.T) {
-	t.Parallel()
-	// [1, 2, 3].all(x, x > 0)
-	f := "testdata/hover/macros.cel"
+		// Has macro tests
+		{name: "has_macro_header", file: "testdata/hover/has_macro.cel", line: 0, char: 0, contains: "**Macro**: `has`", desc: "'has' macro header"},
+		{name: "has_macro_description", file: "testdata/hover/has_macro.cel", line: 0, char: 0, contains: "presence of a field", desc: "'has' description"},
 
-	requireHoverContains(t, f, 0, 10, "**Macro**: `all`", "'all' macro header")
-	requireHoverContains(t, f, 0, 10, "all elements", "'all' macro description")
-	requireHoverContains(t, f, 0, 10, "**Examples**", "'all' has examples")
-}
+		// Exists_one macro tests
+		{name: "exists_one_macro", file: "testdata/hover/exists_one.cel", line: 0, char: 10, contains: "exists_one", desc: "'exists_one' macro"},
+		{name: "exists_one_description", file: "testdata/hover/exists_one.cel", line: 0, char: 10, contains: "exactly one", desc: "'exists_one' description"},
 
-func TestHoverHasMacro(t *testing.T) {
-	t.Parallel()
-	// has(msg.field)
-	// 01234567890123
-	f := "testdata/hover/has_macro.cel"
+		// Map macro tests
+		{name: "map_macro_header", file: "testdata/hover/map_macro.cel", line: 0, char: 10, contains: "**Macro**: `map`", desc: "'map' macro header"},
+		{name: "map_macro_description", file: "testdata/hover/map_macro.cel", line: 0, char: 10, contains: "transform", desc: "'map' description"},
 
-	requireHoverContains(t, f, 0, 0, "**Macro**: `has`", "'has' macro header")
-	requireHoverContains(t, f, 0, 0, "presence of a field", "'has' description")
-}
+		// More macros tests
+		{name: "exists_macro", file: "testdata/hover/more_macros.cel", line: 0, char: 10, contains: "exists", desc: "'exists' macro"},
+		{name: "exists_description", file: "testdata/hover/more_macros.cel", line: 0, char: 10, contains: "any value", desc: "'exists' description"},
+		{name: "filter_macro", file: "testdata/hover/more_macros.cel", line: 0, char: 41, contains: "filter", desc: "'filter' macro"},
+		{name: "filter_description", file: "testdata/hover/more_macros.cel", line: 0, char: 41, contains: "satisfy the given predicate", desc: "'filter' description"},
 
-func TestHoverExistsOneMacro(t *testing.T) {
-	t.Parallel()
-	// [1, 2, 3].exists_one(x, x > 2)
-	// 0         1         2         3
-	// 0123456789012345678901234567890
-	f := "testdata/hover/exists_one.cel"
+		// Functions tests
+		{name: "size_function", file: "testdata/hover/functions.cel", line: 0, char: 1, contains: "size", desc: "'size' function"},
+		{name: "size_overloads", file: "testdata/hover/functions.cel", line: 0, char: 1, contains: "**Overloads**", desc: "'size' has overloads"},
+		{name: "int_type_conversion", file: "testdata/hover/functions.cel", line: 0, char: 17, contains: "int", desc: "'int' type conversion"},
+		{name: "int_description", file: "testdata/hover/functions.cel", line: 0, char: 17, contains: "convert a value to an int", desc: "'int' description"},
 
-	requireHoverContains(t, f, 0, 10, "exists_one", "'exists_one' macro")
-	requireHoverContains(t, f, 0, 10, "exactly one", "'exists_one' description")
-}
+		// Type conversions tests
+		{name: "string_conversion", file: "testdata/hover/type_conversions.cel", line: 0, char: 0, contains: "convert a value to a string", desc: "'string()' description"},
+		{name: "string_type_header", file: "testdata/hover/type_conversions.cel", line: 0, char: 0, contains: "**Type**", desc: "'string' type header"},
+		{name: "double_conversion", file: "testdata/hover/type_conversions.cel", line: 0, char: 13, contains: "convert a value to a double", desc: "'double()' description"},
+		{name: "double_type_header", file: "testdata/hover/type_conversions.cel", line: 0, char: 13, contains: "**Type**", desc: "'double' type header"},
 
-func TestHoverMapMacro(t *testing.T) {
-	t.Parallel()
-	// [1, 2, 3].map(x, x * 2)
-	// 0         1
-	// 0123456789012345678901234
-	f := "testdata/hover/map_macro.cel"
+		// Methods tests
+		{name: "startswith_method", file: "testdata/hover/methods.cel", line: 0, char: 8, contains: "startsWith", desc: "'startsWith' method"},
+		{name: "startswith_description", file: "testdata/hover/methods.cel", line: 0, char: 8, contains: "prefix", desc: "'startsWith' description"},
+		{name: "contains_method", file: "testdata/hover/methods.cel", line: 0, char: 38, contains: "contains", desc: "'contains' method"},
+		{name: "contains_description", file: "testdata/hover/methods.cel", line: 0, char: 38, contains: "substring", desc: "'contains' description"},
 
-	requireHoverContains(t, f, 0, 10, "**Macro**: `map`", "'map' macro header")
-	requireHoverContains(t, f, 0, 10, "transform", "'map' description")
-}
+		// More methods tests
+		{name: "endswith_method", file: "testdata/hover/more_methods.cel", line: 0, char: 14, contains: "endsWith", desc: "'endsWith' method"},
+		{name: "endswith_description", file: "testdata/hover/more_methods.cel", line: 0, char: 14, contains: "suffix", desc: "'endsWith' description"},
+		{name: "matches_method", file: "testdata/hover/more_methods.cel", line: 0, char: 44, contains: "matches", desc: "'matches' method"},
+		{name: "matches_description", file: "testdata/hover/more_methods.cel", line: 0, char: 44, contains: "RE2", desc: "'matches' description"},
 
-func TestHoverMoreMacros(t *testing.T) {
-	t.Parallel()
-	// [1, 2, 3].exists(x, x > 2) && [1, 2, 3].filter(y, y > 1).size() > 0
-	// 0         1         2         3         4
-	// 0123456789012345678901234567890123456789012345678901234567890
-	f := "testdata/hover/more_macros.cel"
+		// Keywords tests
+		{name: "true_keyword", file: "testdata/hover/keywords.cel", line: 0, char: 0, contains: "true", desc: "'true' keyword"},
+		{name: "false_keyword", file: "testdata/hover/keywords.cel", line: 0, char: 9, contains: "false", desc: "'false' keyword"},
+		{name: "null_keyword", file: "testdata/hover/keywords.cel", line: 0, char: 18, contains: "null", desc: "'null' keyword"},
+		{name: "null_type_info", file: "testdata/hover/keywords.cel", line: 0, char: 18, contains: "null_type", desc: "'null' type info"},
 
-	requireHoverContains(t, f, 0, 10, "exists", "'exists' macro")
-	requireHoverContains(t, f, 0, 10, "any value", "'exists' description")
-	requireHoverContains(t, f, 0, 41, "filter", "'filter' macro")
-	requireHoverContains(t, f, 0, 41, "satisfy the given predicate", "'filter' description")
-}
+		// Ternary tests
+		{name: "ternary_operator", file: "testdata/hover/ternary.cel", line: 0, char: 6, contains: "ternary", desc: "'?' ternary operator"},
+		{name: "ternary_operator_header", file: "testdata/hover/ternary.cel", line: 0, char: 6, contains: "**Operator**", desc: "'?' operator header"},
 
-func TestHoverFunctions(t *testing.T) {
-	t.Parallel()
-	// size("hello") + int("42")
-	f := "testdata/hover/functions.cel"
+		// Literals tests (no hover)
+		{name: "literals_no_hover", file: "testdata/hover/literals.cel", line: 0, char: 3, contains: "", desc: "string literal — no hover"},
 
-	requireHoverContains(t, f, 0, 1, "size", "'size' function")
-	requireHoverContains(t, f, 0, 1, "**Overloads**", "'size' has overloads")
-	requireHoverContains(t, f, 0, 17, "int", "'int' type conversion")
-	requireHoverContains(t, f, 0, 17, "convert a value to an int", "'int' description")
-}
+		// Whitespace tests (no hover)
+		{name: "whitespace_no_hover", file: "testdata/hover/operators.cel", line: 0, char: 1, contains: "", desc: "whitespace between tokens — no hover"},
 
-func TestHoverTypeConversions(t *testing.T) {
-	t.Parallel()
-	// string(42) + double("3.14")
-	// 0         1         2
-	// 0123456789012345678901234567
-	f := "testdata/hover/type_conversions.cel"
+		// Number literal tests (no hover)
+		{name: "number_literal_0", file: "testdata/hover/operators.cel", line: 0, char: 4, contains: "", desc: "number literal '0' — no hover"},
+		{name: "number_literal_10", file: "testdata/hover/operators.cel", line: 0, char: 13, contains: "", desc: "number literal '10' — no hover"},
 
-	requireHoverContains(t, f, 0, 0, "convert a value to a string", "'string()' description")
-	requireHoverContains(t, f, 0, 0, "**Type**", "'string' type header")
-	requireHoverContains(t, f, 0, 13, "convert a value to a double", "'double()' description")
-	requireHoverContains(t, f, 0, 13, "**Type**", "'double' type header")
-}
+		// Multiline tests
+		{name: "multiline_eq", file: "testdata/hover/multiline.cel", line: 0, char: 2, contains: "equality", desc: "'==' on line 1"},
+		{name: "multiline_ne", file: "testdata/hover/multiline.cel", line: 1, char: 2, contains: "inequality", desc: "'!=' on line 2"},
+		{name: "multiline_gte", file: "testdata/hover/multiline.cel", line: 2, char: 2, contains: "greater than or equal", desc: "'>=' on line 3"},
+		{name: "multiline_lte", file: "testdata/hover/multiline.cel", line: 3, char: 2, contains: "less than or equal", desc: "'<=' on line 4"},
 
-func TestHoverMethods(t *testing.T) {
-	t.Parallel()
-	// "hello".startsWith("he") && "hello".contains("ell")
-	f := "testdata/hover/methods.cel"
+		// Unknown function tests (no hover)
+		{name: "unknown_function_no_hover", file: "testdata/hover/unknown_func.cel", line: 0, char: 0, contains: "", desc: "unknown function — no hover"},
 
-	requireHoverContains(t, f, 0, 8, "startsWith", "'startsWith' method")
-	requireHoverContains(t, f, 0, 8, "prefix", "'startsWith' description")
-	requireHoverContains(t, f, 0, 38, "contains", "'contains' method")
-	requireHoverContains(t, f, 0, 38, "substring", "'contains' description")
-}
+		// Select tests (no hover)
+		{name: "select_no_hover_msg", file: "testdata/hover/select.cel", line: 0, char: 0, contains: "", desc: "'msg' identifier — no hover"},
+		{name: "select_no_hover_field", file: "testdata/hover/select.cel", line: 0, char: 4, contains: "", desc: "'field' property — no hover"},
+		{name: "select_no_hover_nested", file: "testdata/hover/select.cel", line: 0, char: 10, contains: "", desc: "'nested' property — no hover"},
 
-func TestHoverMoreMethods(t *testing.T) {
-	t.Parallel()
-	// "hello world".endsWith("world") && "abc123".matches("[a-z]+[0-9]+")
-	// 0         1         2         3         4         5         6
-	// 0123456789012345678901234567890123456789012345678901234567890123456789
-	f := "testdata/hover/more_methods.cel"
+		// Comprehension variable tests (no hover)
+		{name: "comp_var_no_hover", file: "testdata/hover/comp_var.cel", line: 0, char: 18, contains: "", desc: "'x' comprehension variable — no hover"},
 
-	requireHoverContains(t, f, 0, 14, "endsWith", "'endsWith' method")
-	requireHoverContains(t, f, 0, 14, "suffix", "'endsWith' description")
-	requireHoverContains(t, f, 0, 44, "matches", "'matches' method")
-	requireHoverContains(t, f, 0, 44, "RE2", "'matches' description")
-}
+		// Empty file tests (no hover)
+		{name: "empty_file_no_hover", file: "testdata/semantic_tokens/empty.cel", line: 0, char: 0, contains: "", desc: "empty file — no hover"},
 
-func TestHoverKeywords(t *testing.T) {
-	t.Parallel()
-	// true && !false || null == null
-	// 0         1         2
-	// 0123456789012345678901234567890
-	f := "testdata/hover/keywords.cel"
+		// Parse error tests (no hover)
+		{name: "parse_error_no_hover", file: "testdata/semantic_tokens/parse_error.cel", line: 0, char: 0, contains: "", desc: "parse error file — no hover"},
 
-	requireHoverContains(t, f, 0, 0, "true", "'true' keyword")
-	requireHoverContains(t, f, 0, 9, "false", "'false' keyword")
-	requireHoverContains(t, f, 0, 18, "null", "'null' keyword")
-	requireHoverContains(t, f, 0, 18, "null_type", "'null' type info")
-}
+		// Token boundary tests
+		{name: "token_boundary_and_first", file: "testdata/hover/operators.cel", line: 0, char: 6, contains: "logically AND", desc: "'&&' first char"},
+		{name: "token_boundary_and_second", file: "testdata/hover/operators.cel", line: 0, char: 7, contains: "logically AND", desc: "'&&' second char"},
+		{name: "token_boundary_space_before", file: "testdata/hover/operators.cel", line: 0, char: 5, contains: "", desc: "space before '&&'"},
+		{name: "token_boundary_space_after", file: "testdata/hover/operators.cel", line: 0, char: 8, contains: "", desc: "space after '&&'"},
+	}
 
-func TestHoverTernary(t *testing.T) {
-	t.Parallel()
-	// x > 0 ? "positive" : "non-positive"
-	f := "testdata/hover/ternary.cel"
-
-	requireHoverContains(t, f, 0, 6, "ternary", "'?' ternary operator")
-	requireHoverContains(t, f, 0, 6, "**Operator**", "'?' operator header")
-}
-
-func TestHoverLiterals(t *testing.T) {
-	t.Parallel()
-	// "hello"
-	f := "testdata/hover/literals.cel"
-
-	requireNoHover(t, f, 0, 3, "string literal — no hover")
-}
-
-func TestHoverWhitespace(t *testing.T) {
-	t.Parallel()
-	f := "testdata/hover/operators.cel"
-
-	requireNoHover(t, f, 0, 1, "whitespace between tokens — no hover")
-}
-
-func TestHoverNumberLiteral(t *testing.T) {
-	t.Parallel()
-	f := "testdata/hover/operators.cel"
-
-	requireNoHover(t, f, 0, 4, "number literal '0' — no hover")
-	requireNoHover(t, f, 0, 13, "number literal '10' — no hover")
-}
-
-func TestHoverMultiline(t *testing.T) {
-	t.Parallel()
-	// x == 1 &&
-	// y != 2 &&
-	// z >= 3 &&
-	// w <= 4
-	f := "testdata/hover/multiline.cel"
-
-	requireHoverContains(t, f, 0, 2, "equality", "'==' on line 1")
-	requireHoverContains(t, f, 1, 2, "inequality", "'!=' on line 2")
-	requireHoverContains(t, f, 2, 2, "greater than or equal", "'>=' on line 3")
-	requireHoverContains(t, f, 3, 2, "less than or equal", "'<=' on line 4")
-}
-
-func TestHoverUnknownFunction(t *testing.T) {
-	t.Parallel()
-	// unknown_func(x, y)
-	f := "testdata/hover/unknown_func.cel"
-
-	// Unknown functions are not in the environment, so no hover
-	requireNoHover(t, f, 0, 0, "unknown function — no hover")
-}
-
-func TestHoverSelect(t *testing.T) {
-	t.Parallel()
-	// msg.field.nested
-	f := "testdata/hover/select.cel"
-
-	requireNoHover(t, f, 0, 0, "'msg' identifier — no hover")
-	requireNoHover(t, f, 0, 4, "'field' property — no hover")
-	requireNoHover(t, f, 0, 10, "'nested' property — no hover")
-}
-
-func TestHoverComprehensionVariable(t *testing.T) {
-	t.Parallel()
-	// [1, 2, 3].all(x, x > 0)
-	f := "testdata/hover/comp_var.cel"
-
-	requireNoHover(t, f, 0, 18, "'x' comprehension variable — no hover")
-}
-
-func TestHoverEmptyFile(t *testing.T) {
-	t.Parallel()
-	f := "testdata/semantic_tokens/empty.cel"
-
-	requireNoHover(t, f, 0, 0, "empty file — no hover")
-}
-
-func TestHoverParseError(t *testing.T) {
-	t.Parallel()
-	f := "testdata/semantic_tokens/parse_error.cel"
-
-	requireNoHover(t, f, 0, 0, "parse error file — no hover")
-}
-
-func TestHoverTokenBoundary(t *testing.T) {
-	t.Parallel()
-	// x > 0 && y < 10
-	// 0123456789012345
-	f := "testdata/hover/operators.cel"
-
-	// First char of '&&'
-	requireHoverContains(t, f, 0, 6, "logically AND", "'&&' first char")
-	// Second char of '&&'
-	requireHoverContains(t, f, 0, 7, "logically AND", "'&&' second char")
-	// Just before '&&' (space at col 5)
-	requireNoHover(t, f, 0, 5, "space before '&&'")
-	// Just after '&&' (space at col 8)
-	requireNoHover(t, f, 0, 8, "space after '&&'")
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			if tt.contains == "" {
+				requireNoHover(t, tt.file, tt.line, tt.char, tt.desc)
+			} else {
+				requireHoverContains(t, tt.file, tt.line, tt.char, tt.contains, tt.desc)
+			}
+		})
+	}
 }
 
 func TestHoverComprehensive(t *testing.T) {
