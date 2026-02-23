@@ -1,21 +1,22 @@
 # cells
 
-A language server for [CEL (Common Expression Language)](https://cel.dev).
+A [language server](https://microsoft.github.io/language-server-protocol/) for [CEL (Common Expression Language)](https://cel.dev).
 
 ## Features
 
-- **Semantic highlighting** — keywords, operators, strings, numbers, macros, functions, methods, variables, and type conversions are highlighted with appropriate semantic token types.
+* Semantic highlighting
+* Diagnostics
+* Formatting
+* Hover
+* References
+* Completion
+* Signature help
+* Variable renaming
 
 ## Building
 
-```bash
+```console
 go install github.com/stefanvanburen/cells/cmd/cells@latest
-```
-
-Or from a local checkout:
-
-```bash
-go build -o cells ./cmd/cells/
 ```
 
 ## Usage
@@ -43,7 +44,9 @@ vim.api.nvim_create_autocmd("FileType", {
 })
 ```
 
-Neovim doesn't recognize `.cel` files by default, so you'll also need to add a filetype detection rule:
+Neovim doesn't recognize `.cel` files by default
+(until [0.12 is released](https://github.com/neovim/neovim/pull/37834)),
+so you'll also need to add a filetype detection rule:
 
 ```lua
 vim.filetype.add({
@@ -54,11 +57,3 @@ vim.filetype.add({
 ```
 
 To verify it's working, open a `.cel` file and run `:checkhealth lsp` or `:LspInfo`.
-
-## Testing
-
-```bash
-go test ./...
-```
-
-Integration tests boot the LSP server over an in-memory pipe, open `.cel` test files, and verify semantic token responses.
