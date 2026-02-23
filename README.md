@@ -1,6 +1,7 @@
 # cells
 
 A [language server](https://microsoft.github.io/language-server-protocol/) for [CEL (Common Expression Language)](https://cel.dev).
+It operates on individual `.cel` files, providing various LSP features.
 
 ## Installation
 
