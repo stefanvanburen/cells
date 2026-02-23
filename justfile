@@ -5,19 +5,15 @@ default: check
 test:
     go test -race ./...
 
-# Run all tests with verbose output.
-test-v:
-    go test -race -v ./...
-
-# Run go vet, staticcheck, and go fix.
+# Run go vet and staticcheck.
 lint:
     go vet ./...
-    staticcheck ./...
-    go fix ./...
+    go tool staticcheck ./...
 
-# Format all Go files.
+# Format all Go files and run automatic fixes.
 fmt:
     gofmt -w .
+    go fix ./...
 
 # Run lint and test.
 check: lint test
