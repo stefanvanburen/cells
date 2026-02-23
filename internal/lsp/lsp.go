@@ -95,6 +95,10 @@ func (s *server) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.
 		return s.rename(req)
 	case "textDocument/prepareRename":
 		return s.prepareRename(req)
+	case "textDocument/references":
+		return s.references(req)
+	case "textDocument/documentHighlight":
+		return s.documentHighlight(req)
 	default:
 		return nil, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
@@ -125,7 +129,9 @@ func (s *server) initialize(req *jsonrpc2.Request) (any, error) {
 			SignatureHelpProvider: &protocol.SignatureHelpOptions{
 				TriggerCharacters: []string{"(", ","},
 			},
-			RenameProvider: &protocol.Or_ServerCapabilities_renameProvider{Value: true},
+			RenameProvider:            &protocol.Or_ServerCapabilities_renameProvider{Value: true},
+			ReferencesProvider:        &protocol.Or_ServerCapabilities_referencesProvider{Value: true},
+			DocumentHighlightProvider: &protocol.Or_ServerCapabilities_documentHighlightProvider{Value: true},
 		},
 		ServerInfo: &protocol.ServerInfo{
 			Name: serverName,

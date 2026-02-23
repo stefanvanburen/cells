@@ -5,8 +5,6 @@ import (
 	"fmt"
 	"maps"
 	"strings"
-	"unicode/utf16"
-	"unicode/utf8"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common"
@@ -100,31 +98,6 @@ func computeHover(f *file, celEnv *cel.Env, pos protocol.Position) (*protocol.Ho
 			End:   protocol.Position{Line: endLine, Character: endCol},
 		},
 	}, nil
-}
-
-// lineColToByteOffset converts an LSP position (0-indexed line, UTF-16 col) to a byte offset.
-func lineColToByteOffset(text string, line, utf16Col uint32) int {
-	currentLine := uint32(0)
-	i := 0
-	for i < len(text) && currentLine < line {
-		if text[i] == '\n' {
-			currentLine++
-		}
-		i++
-	}
-	if currentLine != line {
-		return -1
-	}
-	col := uint32(0)
-	for i < len(text) && col < utf16Col {
-		if text[i] == '\n' {
-			return -1
-		}
-		r, size := utf8.DecodeRuneInString(text[i:])
-		col += uint32(utf16.RuneLen(r))
-		i += size
-	}
-	return i
 }
 
 // walkCELExprForHover walks the CEL AST and collects hover info.

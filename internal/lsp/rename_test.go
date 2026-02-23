@@ -49,7 +49,7 @@ func TestRename(t *testing.T) {
 		position      protocol.Position
 		newName       string
 		testType      testType
-		expectedCount int // For rename: expected replacement count. For validate: 0=accept, 1=reject
+		expectedCount int  // For rename: expected replacement count. For validate: 0=accept, 1=reject
 		canRename     bool // For prepare: whether rename should be possible
 		description   string
 	}{
@@ -187,8 +187,6 @@ func TestRename(t *testing.T) {
 			description:   "Handle empty file gracefully",
 		},
 
-
-
 		// Prepare rename tests
 		// Note: prepare_rename_variable skipped due to identifier finding limitations
 		// {
@@ -200,19 +198,19 @@ func TestRename(t *testing.T) {
 		// 	description: "Variables should be renameable",
 		// },
 		{
-			name:      "prepare_rename_function",
-			file:      "testdata/rename/builtin_function.cel",
-			position:  protocol.Position{Line: 0, Character: 0},
-			testType:  typePrepare,
-			canRename: false,
+			name:        "prepare_rename_function",
+			file:        "testdata/rename/builtin_function.cel",
+			position:    protocol.Position{Line: 0, Character: 0},
+			testType:    typePrepare,
+			canRename:   false,
 			description: "Built-in functions should not be renameable",
 		},
 		{
-			name:      "prepare_rename_literal",
-			file:      "testdata/rename/empty.cel",
-			position:  protocol.Position{Line: 0, Character: 0},
-			testType:  typePrepare,
-			canRename: false,
+			name:        "prepare_rename_literal",
+			file:        "testdata/rename/empty.cel",
+			position:    protocol.Position{Line: 0, Character: 0},
+			testType:    typePrepare,
+			canRename:   false,
 			description: "Literals should not be renameable",
 		},
 

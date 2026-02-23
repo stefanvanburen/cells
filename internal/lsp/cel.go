@@ -53,7 +53,7 @@ func celRuneOffsetToByteOffset(s string, runeOffset int32) int {
 // celOffsetRangeToByteRange converts a CEL ast.OffsetRange to byte offsets.
 func celOffsetRangeToByteRange(exprString string, r celast.OffsetRange) (byteStart, byteStop int) {
 	byteStart = celRuneOffsetToByteOffset(exprString, r.Start)
-	byteStop = byteStart + int(r.Stop-r.Start)
+	byteStop = celRuneOffsetToByteOffset(exprString, r.Stop)
 	return
 }
 
@@ -84,4 +84,29 @@ func byteOffsetToLineCol(text string, offset int) (line, col uint32) {
 		i += size
 	}
 	return
+}
+
+// lineColToByteOffset converts an LSP position (0-indexed line, UTF-16 col) to a byte offset.
+func lineColToByteOffset(text string, line, utf16Col uint32) int {
+	currentLine := uint32(0)
+	i := 0
+	for i < len(text) && currentLine < line {
+		if text[i] == '\n' {
+			currentLine++
+		}
+		i++
+	}
+	if currentLine != line {
+		return -1
+	}
+	col := uint32(0)
+	for i < len(text) && col < utf16Col {
+		if text[i] == '\n' {
+			return -1
+		}
+		r, size := utf8.DecodeRuneInString(text[i:])
+		col += uint32(utf16.RuneLen(r))
+		i += size
+	}
+	return i
 }

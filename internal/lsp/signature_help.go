@@ -209,7 +209,7 @@ func countParametersBeforeCursor(exprString string, callByteStart, cursorOffset 
 // funcDecl must implement the interface with Documentation() method.
 // If isMemberFunction is true, only member function overloads are included;
 // if false, only global function overloads are included.
-func generateSignatures(funcDecl interface{}, isMemberFunction bool) []protocol.SignatureInformation {
+func generateSignatures(funcDecl any, isMemberFunction bool) []protocol.SignatureInformation {
 	// Try to get documentation if available.
 	var doc *common.Doc
 	if documenter, ok := funcDecl.(interface{ Documentation() *common.Doc }); ok {
@@ -273,12 +273,12 @@ func generateSignatures(funcDecl interface{}, isMemberFunction bool) []protocol.
 func isSignatureMatchingCallType(signature string, isMemberFunction bool) bool {
 	// A simple heuristic: member functions have a dot before the opening paren.
 	// E.g., "string.matches(string) -> bool" contains a dot.
-	openParen := strings.Index(signature, "(")
-	if openParen == -1 {
+	before, _, ok := strings.Cut(signature, "(")
+	if !ok {
 		return true // Can't determine, so include it
 	}
 
-	beforeParen := signature[:openParen]
+	beforeParen := before
 	hasDot := strings.Contains(beforeParen, ".")
 
 	// If it's a member call, we want signatures with dots.

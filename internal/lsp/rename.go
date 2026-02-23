@@ -174,8 +174,9 @@ func computePrepareRename(f *file, celEnv *cel.Env, pos protocol.Position) (any,
 		return nil, nil
 	}
 
-	startLine, startCol := byteOffsetToLineCol(f.content, int(offsetRange.Start))
-	endLine, endCol := byteOffsetToLineCol(f.content, int(offsetRange.Stop))
+	byteStart, byteEnd := celOffsetRangeToByteRange(f.content, offsetRange)
+	startLine, startCol := byteOffsetToLineCol(f.content, byteStart)
+	endLine, endCol := byteOffsetToLineCol(f.content, byteEnd)
 
 	return &protocol.Range{
 		Start: protocol.Position{Line: startLine, Character: startCol},
@@ -200,12 +201,31 @@ func findIdentifierAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, fileCon
 		}
 
 		offsetRange, hasOffset := sourceInfo.GetOffsetRange(e.ID())
-		if !hasOffset {
-			return
+		var byteStart, byteStop int
+		var isInRange bool
+
+		if hasOffset {
+			// Convert rune offsets to byte offsets for comparison
+			byteStart, byteStop = celOffsetRangeToByteRange(fileContent, offsetRange)
+
+			// Check if targetOffset falls within this expression's range
+			// For comprehensions with empty offset ranges, we need to check differently
+			isInRange = targetOffset >= byteStart && targetOffset < byteStop
+			if e.Kind() == ast.ComprehensionKind && byteStart == byteStop {
+				// Comprehensions expanded from macros may have empty offset ranges
+				// In this case, we can't rely on the range check, so we'll skip to special handling
+				isInRange = true
+			}
+		} else {
+			// No offset range - for comprehensions, we still want to recurse into children
+			if e.Kind() == ast.ComprehensionKind {
+				isInRange = true // Process comprehensions even without offset ranges
+			} else {
+				return // Skip non-comprehension expressions without offset ranges
+			}
 		}
 
-		// Check if targetOffset falls within this expression's range
-		if targetOffset >= int(offsetRange.Start) && targetOffset < int(offsetRange.Stop) {
+		if isInRange && hasOffset {
 			// For identifiers, add to candidates
 			if e.Kind() == ast.IdentKind {
 				identName := e.AsIdent()
@@ -221,8 +241,7 @@ func findIdentifierAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, fileCon
 				call := e.AsCall()
 				funcName := call.FunctionName()
 				// Try to find the function name in the source
-				byteStart, byteEnd := celOffsetRangeToByteRange(fileContent, offsetRange)
-				funcNameStart := strings.Index(fileContent[byteStart:byteEnd], funcName)
+				funcNameStart := strings.Index(fileContent[byteStart:byteStop], funcName)
 				if funcNameStart >= 0 {
 					funcNameStart += byteStart
 					funcNameEnd := funcNameStart + len(funcName)
@@ -232,6 +251,59 @@ func findIdentifierAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, fileCon
 							exprID: e.ID(),
 							kind:   identifierKindFunction,
 						})
+					}
+				}
+
+				// Special handling for comprehension macros (map, filter, all, exists, etc.)
+				// The first argument is the loop variable declaration
+				if isCELMacroFunction(funcName) && len(call.Args()) > 0 {
+					firstArg := call.Args()[0]
+					if firstArg.Kind() == ast.IdentKind {
+						loopVarName := firstArg.AsIdent()
+						// Try to find the loop variable in the source within the call's range
+						loopVarIdx := strings.Index(fileContent[byteStart:byteStop], loopVarName)
+						if loopVarIdx >= 0 {
+							loopVarStart := byteStart + loopVarIdx
+							loopVarEnd := loopVarStart + len(loopVarName)
+							// Make sure we found the actual loop variable, not some other occurrence
+							if targetOffset >= loopVarStart && targetOffset < loopVarEnd {
+								// Make sure it's a word boundary (not part of a larger identifier)
+								if (loopVarStart == 0 || !isIdentifierChar(rune(fileContent[loopVarStart-1]))) &&
+									(loopVarEnd >= len(fileContent) || !isIdentifierChar(rune(fileContent[loopVarEnd]))) {
+									candidates = append(candidates, &identifierInfo{
+										name:   loopVarName,
+										exprID: e.ID(),                 // Use the call's ID, not the first arg's ID
+										kind:   identifierKindTopLevel, // Will be refined to loop var by determineIdentifierScope
+									})
+								}
+							}
+						}
+					}
+				}
+			}
+
+			// For comprehensions (which are expanded macros like map, filter, all, exists)
+			// The loop variable is accessed differently
+			if e.Kind() == ast.ComprehensionKind {
+				comp := e.AsComprehension()
+				// The loop variable name is stored in the comprehension
+				loopVarName := comp.IterVar()
+				// Try to find the loop variable in the source
+				loopVarIdx := strings.Index(fileContent[byteStart:], loopVarName)
+				if loopVarIdx >= 0 {
+					loopVarStart := byteStart + loopVarIdx
+					loopVarEnd := loopVarStart + len(loopVarName)
+					// Make sure it's a word boundary
+					if (loopVarStart == 0 || !isIdentifierChar(rune(fileContent[loopVarStart-1]))) &&
+						(loopVarEnd >= len(fileContent) || !isIdentifierChar(rune(fileContent[loopVarEnd]))) {
+						if targetOffset >= loopVarStart && targetOffset < loopVarEnd {
+							// Get the ID of the iterator variable
+							candidates = append(candidates, &identifierInfo{
+								name:   loopVarName,
+								exprID: e.ID(),
+								kind:   identifierKindTopLevel, // Will be refined to loop var by determineIdentifierScope
+							})
+						}
 					}
 				}
 			}
@@ -287,7 +359,83 @@ func findIdentifierAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, fileCon
 	if len(candidates) == 0 {
 		return nil
 	}
-	return candidates[len(candidates)-1]
+
+	bestCandidate := candidates[len(candidates)-1]
+
+	// If we found an Ident that looks like it might be a loop variable inside a comprehension,
+	// check if any comprehension has this as its loop variable, and use that comprehension's ID.
+	if bestCandidate.kind == identifierKindTopLevel && !strings.Contains(fileContent, "."+bestCandidate.name) {
+		// Try to find if this identifier is a loop variable in any comprehension
+		var checkWalk func(ast.Expr)
+		checkWalk = func(e ast.Expr) {
+			if e == nil {
+				return
+			}
+
+			if e.Kind() == ast.ComprehensionKind {
+				comp := e.AsComprehension()
+				if comp.IterVar() == bestCandidate.name {
+					// Check if targetOffset is within or after this comprehension
+					if offsetRange, hasOffset := sourceInfo.GetOffsetRange(e.ID()); hasOffset {
+						byteStart, byteStop := celOffsetRangeToByteRange(fileContent, offsetRange)
+						// For empty comprehensions, use a larger range
+						if byteStart == byteStop {
+							// Try to find the comprehension in the source
+							// It should be somewhere around the target offset
+							if targetOffset > byteStart && targetOffset < byteStart+1000 { // arbitrary large range
+								bestCandidate.exprID = e.ID()
+								return
+							}
+						} else if targetOffset >= byteStart && targetOffset < byteStop {
+							bestCandidate.exprID = e.ID()
+							return
+						}
+					}
+				}
+			}
+
+			// Recurse
+			switch e.Kind() {
+			case ast.CallKind:
+				call := e.AsCall()
+				for _, arg := range call.Args() {
+					checkWalk(arg)
+				}
+				if call.IsMemberFunction() {
+					checkWalk(call.Target())
+				}
+			case ast.ListKind:
+				for _, elem := range e.AsList().Elements() {
+					checkWalk(elem)
+				}
+			case ast.MapKind:
+				for _, entry := range e.AsMap().Entries() {
+					mapEntry := entry.AsMapEntry()
+					checkWalk(mapEntry.Key())
+					checkWalk(mapEntry.Value())
+				}
+			case ast.StructKind:
+				for _, field := range e.AsStruct().Fields() {
+					checkWalk(field.AsStructField().Value())
+				}
+			case ast.SelectKind:
+				sel := e.AsSelect()
+				if sel.Operand() != nil {
+					checkWalk(sel.Operand())
+				}
+			case ast.ComprehensionKind:
+				comp := e.AsComprehension()
+				checkWalk(comp.IterRange())
+				checkWalk(comp.AccuInit())
+				checkWalk(comp.LoopCondition())
+				checkWalk(comp.LoopStep())
+				checkWalk(comp.Result())
+			}
+		}
+		checkWalk(expr)
+	}
+
+	return bestCandidate
 }
 
 // determineIdentifierScope figures out whether an identifier is top-level or a loop variable.
@@ -312,7 +460,26 @@ func findLoopVarScope(exprID int64, identName string, expr ast.Expr, sourceInfo 
 			return
 		}
 
-		// Check if this is a comprehension and the target identifier is its loop var
+		// Check if this is a comprehension (expanded macro) and the target identifier is its loop var
+		if e.Kind() == ast.ComprehensionKind {
+			comp := e.AsComprehension()
+			loopVarName := comp.IterVar()
+			if loopVarName == identName {
+				// For expanded macros, the exprID will be the comprehension's ID
+				// since the loop variable doesn't have a separate ID
+				if exprID == e.ID() {
+					// Infer the macro name from the result expression
+					// This is a best-effort approach since we don't have direct access to the macro name
+					result = &loopVarScope{
+						comprehensionID: e.ID(),
+						macroName:       "unknown", // Will be refined if needed
+					}
+					return
+				}
+			}
+		}
+
+		// Check if this is a comprehension macro CallExpr and the target identifier is its loop var
 		if e.Kind() == ast.CallKind {
 			call := e.AsCall()
 			funcName := call.FunctionName()
@@ -469,14 +636,21 @@ func findAllOccurrences(expr ast.Expr, sourceInfo *ast.SourceInfo, fileContent s
 	switch sc := s.(type) {
 	case loopVarScope:
 		// Find the comprehension and only search within its scope
+		// First try CallExpr
 		comp := findComprehensionByID(expr, sc.comprehensionID)
 		if comp != nil {
 			collectIdentifiersInComprehension(comp, sourceInfo, fileContent, oldName, newName, &edits)
+		} else {
+			// Try ComprehensionKind
+			compExpr := findComprehensionExprByID(expr, sc.comprehensionID)
+			if compExpr != nil {
+				edits = collectIdentifiersInComprehensionExpr(compExpr, sourceInfo, fileContent, oldName, newName)
+			}
 		}
 
 	case topLevelScope:
 		// Search entire expression
-		collectAllIdentifiersInExpr(expr, sourceInfo, fileContent, oldName, newName, &edits)
+		edits = CollectIdentifierOccurrences(expr, sourceInfo, fileContent, oldName, newName)
 	}
 
 	return edits
@@ -541,6 +715,12 @@ func findComprehensionByID(expr ast.Expr, targetID int64) ast.CallExpr {
 
 	case ast.ComprehensionKind:
 		comp := expr.AsComprehension()
+		// Check if this comprehension's ID matches the target
+		if expr.ID() == targetID {
+			// For expanded macros, the comprehension itself is the target.
+			// Return nil here, and the caller will use findComprehensionExprByID instead.
+			return nil
+		}
 		if result := findComprehensionByID(comp.IterRange(), targetID); result != nil {
 			return result
 		}
@@ -561,6 +741,85 @@ func findComprehensionByID(expr ast.Expr, targetID int64) ast.CallExpr {
 	return nil
 }
 
+// findComprehensionExprByID walks the AST to find a ComprehensionKind node with the given ID.
+func findComprehensionExprByID(expr ast.Expr, targetID int64) ast.Expr {
+	if expr == nil {
+		return nil
+	}
+
+	if expr.Kind() == ast.ComprehensionKind && expr.ID() == targetID {
+		return expr
+	}
+
+	switch expr.Kind() {
+	case ast.CallKind:
+		call := expr.AsCall()
+		for _, arg := range call.Args() {
+			if result := findComprehensionExprByID(arg, targetID); result != nil {
+				return result
+			}
+		}
+		if call.IsMemberFunction() {
+			if result := findComprehensionExprByID(call.Target(), targetID); result != nil {
+				return result
+			}
+		}
+
+	case ast.ListKind:
+		for _, elem := range expr.AsList().Elements() {
+			if result := findComprehensionExprByID(elem, targetID); result != nil {
+				return result
+			}
+		}
+
+	case ast.MapKind:
+		for _, entry := range expr.AsMap().Entries() {
+			mapEntry := entry.AsMapEntry()
+			if result := findComprehensionExprByID(mapEntry.Key(), targetID); result != nil {
+				return result
+			}
+			if result := findComprehensionExprByID(mapEntry.Value(), targetID); result != nil {
+				return result
+			}
+		}
+
+	case ast.StructKind:
+		for _, field := range expr.AsStruct().Fields() {
+			if result := findComprehensionExprByID(field.AsStructField().Value(), targetID); result != nil {
+				return result
+			}
+		}
+
+	case ast.SelectKind:
+		sel := expr.AsSelect()
+		if sel.Operand() != nil {
+			if result := findComprehensionExprByID(sel.Operand(), targetID); result != nil {
+				return result
+			}
+		}
+
+	case ast.ComprehensionKind:
+		comp := expr.AsComprehension()
+		if result := findComprehensionExprByID(comp.IterRange(), targetID); result != nil {
+			return result
+		}
+		if result := findComprehensionExprByID(comp.AccuInit(), targetID); result != nil {
+			return result
+		}
+		if result := findComprehensionExprByID(comp.LoopCondition(), targetID); result != nil {
+			return result
+		}
+		if result := findComprehensionExprByID(comp.LoopStep(), targetID); result != nil {
+			return result
+		}
+		if result := findComprehensionExprByID(comp.Result(), targetID); result != nil {
+			return result
+		}
+	}
+
+	return nil
+}
+
 // collectIdentifiersInComprehension collects all occurrences of identName in a comprehension's expressions.
 func collectIdentifiersInComprehension(comp ast.CallExpr, sourceInfo *ast.SourceInfo, fileContent string, identName string, newName string, edits *[]protocol.TextEdit) {
 	if comp == nil || len(comp.Args()) < 2 {
@@ -573,8 +832,9 @@ func collectIdentifiersInComprehension(comp ast.CallExpr, sourceInfo *ast.Source
 	if firstArg.Kind() == ast.IdentKind && firstArg.AsIdent() == identName {
 		offsetRange, hasOffset := sourceInfo.GetOffsetRange(firstArg.ID())
 		if hasOffset {
-			startLine, startCol := byteOffsetToLineCol(fileContent, int(offsetRange.Start))
-			endLine, endCol := byteOffsetToLineCol(fileContent, int(offsetRange.Stop))
+			byteStart, byteEnd := celOffsetRangeToByteRange(fileContent, offsetRange)
+			startLine, startCol := byteOffsetToLineCol(fileContent, byteStart)
+			endLine, endCol := byteOffsetToLineCol(fileContent, byteEnd)
 
 			*edits = append(*edits, protocol.TextEdit{
 				Range: protocol.Range{
@@ -588,73 +848,65 @@ func collectIdentifiersInComprehension(comp ast.CallExpr, sourceInfo *ast.Source
 
 	// The second argument onward are expressions that use the loop variable
 	for i := 1; i < len(comp.Args()); i++ {
-		collectAllIdentifiersInExpr(comp.Args()[i], sourceInfo, fileContent, identName, newName, edits)
+		collected := CollectIdentifierOccurrences(comp.Args()[i], sourceInfo, fileContent, identName, newName)
+		*edits = append(*edits, collected...)
 	}
 }
 
-// collectAllIdentifiersInExpr recursively collects all occurrences of identName.
-func collectAllIdentifiersInExpr(expr ast.Expr, sourceInfo *ast.SourceInfo, fileContent string, identName string, newName string, edits *[]protocol.TextEdit) {
-	if expr == nil {
-		return
+// collectIdentifiersInComprehensionExpr collects all occurrences of identName in a ComprehensionKind.
+func collectIdentifiersInComprehensionExpr(compExpr ast.Expr, sourceInfo *ast.SourceInfo, fileContent string, identName string, newName string) []protocol.TextEdit {
+	if compExpr == nil || compExpr.Kind() != ast.ComprehensionKind {
+		return nil
 	}
 
-	if expr.Kind() == ast.IdentKind && expr.AsIdent() == identName {
-		offsetRange, hasOffset := sourceInfo.GetOffsetRange(expr.ID())
+	var edits []protocol.TextEdit
+	comp := compExpr.AsComprehension()
+	loopVarName := comp.IterVar()
+
+	// Add edit for the loop variable declaration itself (if it matches)
+	if loopVarName == identName {
+		_, byteStop := celOffsetRangeToByteRange(fileContent, ast.OffsetRange{})
+		iterOffset, hasOffset := sourceInfo.GetOffsetRange(comp.IterRange().ID())
 		if hasOffset {
-			startLine, startCol := byteOffsetToLineCol(fileContent, int(offsetRange.Start))
-			endLine, endCol := byteOffsetToLineCol(fileContent, int(offsetRange.Stop))
+			_, byteStop = celOffsetRangeToByteRange(fileContent, iterOffset)
+		}
 
-			*edits = append(*edits, protocol.TextEdit{
-				Range: protocol.Range{
-					Start: protocol.Position{Line: startLine, Character: startCol},
-					End:   protocol.Position{Line: endLine, Character: endCol},
-				},
-				NewText: newName,
-			})
+		// Find the loop var declaration in the source after the IterRange
+		for i := byteStop; i < len(fileContent)-len(loopVarName)+1; i++ {
+			if fileContent[i:i+len(loopVarName)] == loopVarName {
+				if (i == 0 || !isIdentifierChar(rune(fileContent[i-1]))) &&
+					(i+len(loopVarName) >= len(fileContent) || !isIdentifierChar(rune(fileContent[i+len(loopVarName)]))) {
+					byteStart := i
+					byteEnd := i + len(loopVarName)
+					startLine, startCol := byteOffsetToLineCol(fileContent, byteStart)
+					endLine, endCol := byteOffsetToLineCol(fileContent, byteEnd)
+
+					edits = append(edits, protocol.TextEdit{
+						Range: protocol.Range{
+							Start: protocol.Position{Line: startLine, Character: startCol},
+							End:   protocol.Position{Line: endLine, Character: endCol},
+						},
+						NewText: newName,
+					})
+					break
+				}
+			}
 		}
 	}
 
-	switch expr.Kind() {
-	case ast.CallKind:
-		call := expr.AsCall()
-		for _, arg := range call.Args() {
-			collectAllIdentifiersInExpr(arg, sourceInfo, fileContent, identName, newName, edits)
-		}
-		if call.IsMemberFunction() {
-			collectAllIdentifiersInExpr(call.Target(), sourceInfo, fileContent, identName, newName, edits)
-		}
+	// Collect all occurrences in the comprehension's expressions
+	collected := CollectIdentifierOccurrences(comp.IterRange(), sourceInfo, fileContent, identName, newName)
+	edits = append(edits, collected...)
+	collected = CollectIdentifierOccurrences(comp.AccuInit(), sourceInfo, fileContent, identName, newName)
+	edits = append(edits, collected...)
+	collected = CollectIdentifierOccurrences(comp.LoopCondition(), sourceInfo, fileContent, identName, newName)
+	edits = append(edits, collected...)
+	collected = CollectIdentifierOccurrences(comp.LoopStep(), sourceInfo, fileContent, identName, newName)
+	edits = append(edits, collected...)
+	collected = CollectIdentifierOccurrences(comp.Result(), sourceInfo, fileContent, identName, newName)
+	edits = append(edits, collected...)
 
-	case ast.ListKind:
-		for _, elem := range expr.AsList().Elements() {
-			collectAllIdentifiersInExpr(elem, sourceInfo, fileContent, identName, newName, edits)
-		}
-
-	case ast.MapKind:
-		for _, entry := range expr.AsMap().Entries() {
-			mapEntry := entry.AsMapEntry()
-			collectAllIdentifiersInExpr(mapEntry.Key(), sourceInfo, fileContent, identName, newName, edits)
-			collectAllIdentifiersInExpr(mapEntry.Value(), sourceInfo, fileContent, identName, newName, edits)
-		}
-
-	case ast.StructKind:
-		for _, field := range expr.AsStruct().Fields() {
-			collectAllIdentifiersInExpr(field.AsStructField().Value(), sourceInfo, fileContent, identName, newName, edits)
-		}
-
-	case ast.SelectKind:
-		sel := expr.AsSelect()
-		if sel.Operand() != nil {
-			collectAllIdentifiersInExpr(sel.Operand(), sourceInfo, fileContent, identName, newName, edits)
-		}
-
-	case ast.ComprehensionKind:
-		comp := expr.AsComprehension()
-		collectAllIdentifiersInExpr(comp.IterRange(), sourceInfo, fileContent, identName, newName, edits)
-		collectAllIdentifiersInExpr(comp.AccuInit(), sourceInfo, fileContent, identName, newName, edits)
-		collectAllIdentifiersInExpr(comp.LoopCondition(), sourceInfo, fileContent, identName, newName, edits)
-		collectAllIdentifiersInExpr(comp.LoopStep(), sourceInfo, fileContent, identName, newName, edits)
-		collectAllIdentifiersInExpr(comp.Result(), sourceInfo, fileContent, identName, newName, edits)
-	}
+	return edits
 }
 
 // validateNewName checks if the new name is a valid CEL identifier.
@@ -714,13 +966,16 @@ func findIdentifierByName(expr ast.Expr, sourceInfo *ast.SourceInfo, fileContent
 
 		if e.Kind() == ast.IdentKind && e.AsIdent() == identName {
 			offsetRange, hasOffset := sourceInfo.GetOffsetRange(e.ID())
-			if hasOffset && targetOffset >= int(offsetRange.Start) && targetOffset < int(offsetRange.Stop) {
-				result = &identifierInfo{
-					name:   identName,
-					exprID: e.ID(),
-					kind:   identifierKindTopLevel,
+			if hasOffset {
+				byteStart, byteEnd := celOffsetRangeToByteRange(fileContent, offsetRange)
+				if targetOffset >= byteStart && targetOffset < byteEnd {
+					result = &identifierInfo{
+						name:   identName,
+						exprID: e.ID(),
+						kind:   identifierKindTopLevel,
+					}
+					return
 				}
-				return
 			}
 		}
 
