@@ -2,6 +2,12 @@
 
 A [language server](https://microsoft.github.io/language-server-protocol/) for [CEL (Common Expression Language)](https://cel.dev).
 
+## Installation
+
+```console
+$ go install github.com/stefanvanburen/cells/cmd/cells@latest
+```
+
 ## Features
 
 * Semantic highlighting
@@ -13,20 +19,7 @@ A [language server](https://microsoft.github.io/language-server-protocol/) for [
 * Signature help
 * Variable renaming
 
-## Building
-
-```console
-go install github.com/stefanvanburen/cells/cmd/cells@latest
-```
-
 ## Usage
-
-```bash
-# Start the language server (communicates over stdin/stdout)
-cells serve
-```
-
-## Editor Setup
 
 ### Neovim
 
