@@ -1,0 +1,21 @@
+name: CI
+on:
+  push:
+    branches:
+      - main
+  pull_request: {}
+  workflow_dispatch: {}
+  schedule:
+    # Run at 10am daily.
+    - cron: "0 10 * * *"
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - uses: actions/setup-go@v6
+      with:
+        go-version-file: 'go.mod'
+    - uses: extractions/setup-just@v3
+    - run: just
