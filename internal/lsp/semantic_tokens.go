@@ -83,13 +83,36 @@ func computeSemanticTokens(f *file, celEnv *cel.Env) (*protocol.SemanticTokens, 
 
 	var tokens []tokenInfo
 
+	isWhitespaceRune := func(b byte) bool {
+		return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+	}
+
 	collectToken := func(byteStart, byteEnd int, semanticType, semanticModifier uint32) {
 		if byteStart < 0 || byteEnd <= byteStart || byteEnd > len(f.content) {
 			return
 		}
-		line, col := byteOffsetToLineCol(f.content, byteStart)
+
+		// Trim whitespace from the token boundaries
+		adjustedStart := byteStart
+		adjustedEnd := byteEnd
+
+		// Skip leading whitespace
+		for adjustedStart < adjustedEnd && isWhitespaceRune(f.content[adjustedStart]) {
+			adjustedStart++
+		}
+
+		// Skip trailing whitespace
+		for adjustedEnd > adjustedStart && isWhitespaceRune(f.content[adjustedEnd-1]) {
+			adjustedEnd--
+		}
+
+		if adjustedStart >= adjustedEnd {
+			return // All whitespace
+		}
+
+		line, col := byteOffsetToLineCol(f.content, adjustedStart)
 		// Calculate length in UTF-16 code units (what LSP expects)
-		tokenText := f.content[byteStart:byteEnd]
+		tokenText := f.content[adjustedStart:adjustedEnd]
 		length := uint32(0)
 		for _, r := range tokenText {
 			length += uint32(utf16.RuneLen(r))

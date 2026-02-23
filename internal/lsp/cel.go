@@ -39,8 +39,8 @@ func celOperatorSymbol(funcName string) (string, bool) {
 	return "", false
 }
 
-// celRuneOffsetToByteOffset converts a CEL source position (rune offset)
-// to a UTF-8 byte offset within the expression string.
+// celRuneOffsetToByteOffset converts a rune offset to a UTF-8 byte offset within a string.
+// Used by celOffsetRangeToByteRange to interpret CEL offsets as rune-based when appropriate.
 func celRuneOffsetToByteOffset(s string, runeOffset int32) int {
 	byteIdx := 0
 	for runeIdx := int32(0); runeIdx < runeOffset && byteIdx < len(s); runeIdx++ {
@@ -51,10 +51,43 @@ func celRuneOffsetToByteOffset(s string, runeOffset int32) int {
 }
 
 // celOffsetRangeToByteRange converts a CEL ast.OffsetRange to byte offsets.
+// CEL reports offsets inconsistently for different token types:
+// - String literals: sometimes byte offsets (potentially with off-by-one errors)
+// - Operators: rune offsets
+// We use a heuristic: try byte offsets first, then rune offsets, and pick the one
+// that produces non-whitespace content (since CEL sometimes pads offsets with spaces).
 func celOffsetRangeToByteRange(exprString string, r celast.OffsetRange) (byteStart, byteStop int) {
-	byteStart = celRuneOffsetToByteOffset(exprString, r.Start)
-	byteStop = celRuneOffsetToByteOffset(exprString, r.Stop)
-	return
+	start := int(r.Start)
+	stop := int(r.Stop)
+
+	// Try byte offsets first if they're valid
+	if start >= 0 && stop <= len(exprString) {
+		byteText := exprString[start:stop]
+		if utf8.ValidString(byteText) && !startsWithWhitespace(byteText) {
+			return start, stop
+		}
+	}
+
+	// Try rune offsets
+	runeStart := celRuneOffsetToByteOffset(exprString, int32(start))
+	runeStop := celRuneOffsetToByteOffset(exprString, int32(stop))
+	if runeStart >= 0 && runeStop <= len(exprString) {
+		runeText := exprString[runeStart:runeStop]
+		if utf8.ValidString(runeText) && !startsWithWhitespace(runeText) {
+			return runeStart, runeStop
+		}
+	}
+
+	// Fall back to byte offsets
+	return start, stop
+}
+
+func startsWithWhitespace(s string) bool {
+	if len(s) == 0 {
+		return false
+	}
+	r, _ := utf8.DecodeRuneInString(s)
+	return r == ' ' || r == '\t' || r == '\n' || r == '\r'
 }
 
 // findMethodNameAfterDot finds ".methodName" after targetByteOffset.

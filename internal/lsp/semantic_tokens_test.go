@@ -371,14 +371,11 @@ func TestSemanticTokensEmpty(t *testing.T) {
 }
 
 func TestEdgeUnicodeString(t *testing.T) {
-	t.Skip("wrong")
 	t.Parallel()
 	tokens := getSemanticTokens(t, "testdata/semantic_tokens/unicode_string.cel")
 	assertTokens(t, tokens, []expectedToken{
-		// TODO: this should be 7 units, but extends past the "
 		{0, 0, 7, stString, `"héllo" string (7 UTF-16 units)`},
 		{0, 8, 1, stOperator, "'+' operator"},
-		// TODO: also wrong
 		{0, 10, 5, stString, `"日本語" string (5 UTF-16 units)`},
 	})
 }
