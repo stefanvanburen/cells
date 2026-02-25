@@ -19,23 +19,20 @@ $ go install github.com/stefanvanburen/cells/cmd/cells@latest
 * Completion
 * Signature help
 * Variable renaming
+* Inlay hints (expression evaluation)
 
 ## Usage
 
 ### Neovim
 
-Add this to your Neovim config (e.g. `~/.config/nvim/init.lua` or equivalent):
+Add to your config (e.g. `~/.config/nvim/init.lua`):
 
 ```lua
-vim.api.nvim_create_autocmd("FileType", {
-  pattern = "cel",
-  callback = function()
-    vim.lsp.start({
-      name = "cells",
-      cmd = { "cells", "serve" },
-    })
-  end,
+vim.lsp.config("cells", {
+  filetypes = { "cel" },
+  cmd = { "cells", "serve" },
 })
+vim.lsp.enable("cells")
 ```
 
 Neovim doesn't recognize `.cel` files by default

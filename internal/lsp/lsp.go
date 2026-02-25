@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"runtime/debug"
 	"sync"
 
 	"github.com/google/cel-go/cel"
@@ -18,6 +19,14 @@ import (
 )
 
 const serverName = "cells"
+
+func getVersion() string {
+	info, ok := debug.ReadBuildInfo()
+	if !ok {
+		return "dev"
+	}
+	return info.Main.Version
+}
 
 // Serve starts the LSP server, communicating over stdin/stdout.
 // It blocks until the connection is closed.
@@ -99,6 +108,8 @@ func (s *server) handle(ctx context.Context, conn *jsonrpc2.Conn, req *jsonrpc2.
 		return s.references(req)
 	case "textDocument/documentHighlight":
 		return s.documentHighlight(req)
+	case "textDocument/inlayHint":
+		return s.inlayHints(req)
 	default:
 		return nil, &jsonrpc2.Error{
 			Code:    jsonrpc2.CodeMethodNotFound,
@@ -132,9 +143,11 @@ func (s *server) initialize(req *jsonrpc2.Request) (any, error) {
 			RenameProvider:            &protocol.Or_ServerCapabilities_renameProvider{Value: true},
 			ReferencesProvider:        &protocol.Or_ServerCapabilities_referencesProvider{Value: true},
 			DocumentHighlightProvider: &protocol.Or_ServerCapabilities_documentHighlightProvider{Value: true},
+			InlayHintProvider:         &protocol.Or_ServerCapabilities_inlayHintProvider{Value: true},
 		},
 		ServerInfo: &protocol.ServerInfo{
-			Name: serverName,
+			Name:    serverName,
+			Version: getVersion(),
 		},
 	}, nil
 }
