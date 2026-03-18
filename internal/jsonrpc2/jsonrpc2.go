@@ -369,6 +369,7 @@ func (c *Conn) readLoop(ctx context.Context) {
 // readFrame reads one Content-Length–framed message from r.
 func readFrame(r *bufio.Reader) ([]byte, error) {
 	var contentLength int
+	var hasContentLength bool
 	for {
 		line, err := r.ReadString('\n')
 		if err != nil {
@@ -384,10 +385,11 @@ func readFrame(r *bufio.Reader) ([]byte, error) {
 				return nil, fmt.Errorf("bad Content-Length: %w", err)
 			}
 			contentLength = n
+			hasContentLength = true
 		}
 		// ignore other headers (Content-Type, etc.)
 	}
-	if contentLength == 0 {
+	if !hasContentLength {
 		return nil, fmt.Errorf("missing Content-Length header")
 	}
 	body := make([]byte, contentLength)
