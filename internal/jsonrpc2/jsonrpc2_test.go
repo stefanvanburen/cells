@@ -166,12 +166,11 @@ func TestRequestUnmarshalJSON(t *testing.T) {
 func newTestPair(t *testing.T, serverHandler Handler) (client, server *Conn) {
 	t.Helper()
 	clientConn, serverConn := net.Pipe()
-	ctx := context.Background()
 	nullHandler := HandlerFunc(func(_ context.Context, _ *Conn, _ *Request) (any, error) {
 		return nil, nil
 	})
-	server = NewConn(ctx, serverConn, serverHandler)
-	client = NewConn(ctx, clientConn, nullHandler)
+	server = NewConn(t.Context(), serverConn, serverHandler)
+	client = NewConn(t.Context(), clientConn, nullHandler)
 	t.Cleanup(func() {
 		client.Close()
 		server.Close()
@@ -185,11 +184,8 @@ func TestConnCall(t *testing.T) {
 	})
 	client, _ := newTestPair(t, handler)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
 	var result map[string]string
-	if err := client.Call(ctx, "textDocument/hover", map[string]any{"x": 1}, &result); err != nil {
+	if err := client.Call(t.Context(), "textDocument/hover", map[string]any{"x": 1}, &result); err != nil {
 		t.Fatalf("Call: %v", err)
 	}
 	if result["echo"] != "textDocument/hover" {
@@ -207,10 +203,7 @@ func TestConnNotify(t *testing.T) {
 	})
 	client, _ := newTestPair(t, handler)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := client.Notify(ctx, "initialized", map[string]any{}); err != nil {
+	if err := client.Notify(t.Context(), "initialized", map[string]any{}); err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
 	select {
@@ -218,7 +211,7 @@ func TestConnNotify(t *testing.T) {
 		if method != "initialized" {
 			t.Errorf("got %q, want %q", method, "initialized")
 		}
-	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for notification")
 	}
 }
@@ -229,10 +222,7 @@ func TestConnErrorResponse(t *testing.T) {
 	})
 	client, _ := newTestPair(t, handler)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err := client.Call(ctx, "unknown/method", nil, nil)
+	err := client.Call(t.Context(), "unknown/method", nil, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -275,10 +265,9 @@ func TestConnCallErrClosed(t *testing.T) {
 	})
 	client, server := newTestPair(t, handler)
 
-	ctx := context.Background()
 	errCh := make(chan error, 1)
 	go func() {
-		errCh <- client.Call(ctx, "foo", nil, nil)
+		errCh <- client.Call(t.Context(), "foo", nil, nil)
 	}()
 
 	// Wait until the server has received the request, then drop the connection.
@@ -307,10 +296,7 @@ func TestConnInternalErrorWrapping(t *testing.T) {
 	})
 	client, _ := newTestPair(t, handler)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err := client.Call(ctx, "foo", nil, nil)
+	err := client.Call(t.Context(), "foo", nil, nil)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -331,10 +317,7 @@ func TestConnErrorWithData(t *testing.T) {
 	})
 	client, _ := newTestPair(t, handler)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	err := client.Call(ctx, "foo", nil, nil)
+	err := client.Call(t.Context(), "foo", nil, nil)
 	var rpcErr *Error
 	if !errors.As(err, &rpcErr) {
 		t.Fatalf("expected *Error, got %T: %v", err, err)
@@ -359,14 +342,11 @@ func TestConnNotifyNoResponse(t *testing.T) {
 	})
 	client, _ := newTestPair(t, handler)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	if err := client.Notify(ctx, "$/cancelRequest", map[string]any{"id": 1}); err != nil {
+	if err := client.Notify(t.Context(), "$/cancelRequest", map[string]any{"id": 1}); err != nil {
 		t.Fatalf("Notify: %v", err)
 	}
 	var result map[string]string
-	if err := client.Call(ctx, "textDocument/definition", nil, &result); err != nil {
+	if err := client.Call(t.Context(), "textDocument/definition", nil, &result); err != nil {
 		t.Fatalf("Call: %v", err)
 	}
 	if result["method"] != "textDocument/definition" {
@@ -383,9 +363,6 @@ func TestConnConcurrentCalls(t *testing.T) {
 	})
 	client, _ := newTestPair(t, handler)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
 	const n = 20
 	type callResult struct {
 		sent     string
@@ -400,7 +377,7 @@ func TestConnConcurrentCalls(t *testing.T) {
 	for _, method := range methods {
 		go func() {
 			var result map[string]string
-			err := client.Call(ctx, method, nil, &result)
+			err := client.Call(t.Context(), method, nil, &result)
 			results <- callResult{sent: method, received: result["method"], err: err}
 		}()
 	}
@@ -431,7 +408,7 @@ func TestConnCallContextCancel(t *testing.T) {
 	})
 	client, _ := newTestPair(t, handler)
 
-	callCtx, cancel := context.WithCancel(context.Background())
+	callCtx, cancel := context.WithCancel(t.Context())
 	errCh := make(chan error, 1)
 	go func() {
 		errCh <- client.Call(callCtx, "foo", nil, nil)
@@ -483,8 +460,6 @@ func TestConnBidirectional(t *testing.T) {
 	// Both ends of a Conn can initiate calls; the connection is symmetric.
 	// This mirrors LSP server-push scenarios (window/showMessage, etc.).
 	clientConn, serverConn := net.Pipe()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
 	clientHandler := HandlerFunc(func(_ context.Context, _ *Conn, req *Request) (any, error) {
 		return map[string]string{"from": "client"}, nil
@@ -493,15 +468,15 @@ func TestConnBidirectional(t *testing.T) {
 		return map[string]string{"from": "server"}, nil
 	})
 
-	server := NewConn(ctx, serverConn, serverHandler)
-	client := NewConn(ctx, clientConn, clientHandler)
+	server := NewConn(t.Context(), serverConn, serverHandler)
+	client := NewConn(t.Context(), clientConn, clientHandler)
 	t.Cleanup(func() {
 		client.Close()
 		server.Close()
 	})
 
 	var clientResult map[string]string
-	if err := client.Call(ctx, "serverMethod", nil, &clientResult); err != nil {
+	if err := client.Call(t.Context(), "serverMethod", nil, &clientResult); err != nil {
 		t.Fatalf("client.Call: %v", err)
 	}
 	if clientResult["from"] != "server" {
@@ -509,7 +484,7 @@ func TestConnBidirectional(t *testing.T) {
 	}
 
 	var serverResult map[string]string
-	if err := server.Call(ctx, "clientMethod", nil, &serverResult); err != nil {
+	if err := server.Call(t.Context(), "clientMethod", nil, &serverResult); err != nil {
 		t.Fatalf("server.Call: %v", err)
 	}
 	if serverResult["from"] != "client" {
@@ -517,10 +492,30 @@ func TestConnBidirectional(t *testing.T) {
 	}
 }
 
+func TestConnHandlerUnmarshalableResult(t *testing.T) {
+	// HandlerFunc must send a CodeInternalError response if the result value
+	// cannot be marshaled to JSON (e.g. contains a channel).
+	handler := HandlerFunc(func(_ context.Context, _ *Conn, _ *Request) (any, error) {
+		return make(chan int), nil // channels cannot be marshaled
+	})
+	client, _ := newTestPair(t, handler)
+
+	err := client.Call(t.Context(), "foo", nil, nil)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	var rpcErr *Error
+	if !errors.As(err, &rpcErr) {
+		t.Fatalf("expected *Error, got %T: %v", err, err)
+	}
+	if rpcErr.Code != CodeInternalError {
+		t.Errorf("code: got %d, want %d (CodeInternalError)", rpcErr.Code, CodeInternalError)
+	}
+}
+
 func TestConnCloseIdempotent(t *testing.T) {
 	clientConn, serverConn := net.Pipe()
-	ctx := context.Background()
-	conn := NewConn(ctx, serverConn, HandlerFunc(func(_ context.Context, _ *Conn, _ *Request) (any, error) {
+	conn := NewConn(t.Context(), serverConn, HandlerFunc(func(_ context.Context, _ *Conn, _ *Request) (any, error) {
 		return nil, nil
 	}))
 	t.Cleanup(func() { clientConn.Close() })
@@ -542,13 +537,10 @@ func TestConnLargeMessage(t *testing.T) {
 	})
 	client, _ := newTestPair(t, handler)
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
 	// Build a params object whose JSON representation exceeds 4KB.
 	params := map[string]string{"data": strings.Repeat("x", 16*1024)}
 	var result map[string]string
-	if err := client.Call(ctx, "echo", params, &result); err != nil {
+	if err := client.Call(t.Context(), "echo", params, &result); err != nil {
 		t.Fatalf("Call: %v", err)
 	}
 	if result["data"] != params["data"] {
@@ -563,17 +555,14 @@ func TestConnCallUnmarshalableParams(t *testing.T) {
 		return nil, nil
 	}))
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
 	// Channels cannot be marshaled to JSON.
-	err := client.Call(ctx, "foo", make(chan int), nil)
+	err := client.Call(t.Context(), "foo", make(chan int), nil)
 	if err == nil {
 		t.Fatal("expected marshal error, got nil")
 	}
 
 	// The connection must still be usable after the failed call.
-	if err := client.Call(ctx, "foo", nil, nil); err != nil {
+	if err := client.Call(t.Context(), "foo", nil, nil); err != nil {
 		t.Fatalf("subsequent Call failed: %v", err)
 	}
 }
@@ -585,8 +574,6 @@ func TestConnHandlerServerPush(t *testing.T) {
 	pushReceived := make(chan string, 1)
 
 	clientConn, serverConn := net.Pipe()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
 	clientHandler := HandlerFunc(func(_ context.Context, _ *Conn, req *Request) (any, error) {
 		if req.Notif {
@@ -602,15 +589,15 @@ func TestConnHandlerServerPush(t *testing.T) {
 		return "ok", nil
 	})
 
-	server := NewConn(ctx, serverConn, serverHandler)
-	client := NewConn(ctx, clientConn, clientHandler)
+	server := NewConn(t.Context(), serverConn, serverHandler)
+	client := NewConn(t.Context(), clientConn, clientHandler)
 	t.Cleanup(func() {
 		client.Close()
 		server.Close()
 	})
 
 	var result string
-	if err := client.Call(ctx, "textDocument/hover", nil, &result); err != nil {
+	if err := client.Call(t.Context(), "textDocument/hover", nil, &result); err != nil {
 		t.Fatalf("Call: %v", err)
 	}
 	if result != "ok" {
@@ -622,7 +609,7 @@ func TestConnHandlerServerPush(t *testing.T) {
 		if method != "window/logMessage" {
 			t.Errorf("push method: got %q, want window/logMessage", method)
 		}
-	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for server push notification")
 	}
 }
@@ -631,11 +618,9 @@ func TestConnMalformedJSONDropped(t *testing.T) {
 	// A frame with valid Content-Length but invalid JSON body must be silently
 	// dropped; the connection must remain usable for subsequent valid messages.
 	clientConn, serverConn := net.Pipe()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
 
 	received := make(chan string, 1)
-	server := NewConn(ctx, serverConn, HandlerFunc(func(_ context.Context, _ *Conn, req *Request) (any, error) {
+	server := NewConn(t.Context(), serverConn, HandlerFunc(func(_ context.Context, _ *Conn, req *Request) (any, error) {
 		received <- req.Method
 		return nil, nil
 	}))
@@ -658,7 +643,7 @@ func TestConnMalformedJSONDropped(t *testing.T) {
 		if method != "$/ping" {
 			t.Errorf("got %q, want $/ping", method)
 		}
-	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
 		t.Fatal("timeout: connection not usable after malformed JSON frame")
 	}
 }
