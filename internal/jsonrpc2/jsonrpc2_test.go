@@ -517,6 +517,116 @@ func TestConnBidirectional(t *testing.T) {
 	}
 }
 
+func TestConnCloseIdempotent(t *testing.T) {
+	clientConn, serverConn := net.Pipe()
+	ctx := context.Background()
+	conn := NewConn(ctx, serverConn, HandlerFunc(func(_ context.Context, _ *Conn, _ *Request) (any, error) {
+		return nil, nil
+	}))
+	t.Cleanup(func() { clientConn.Close() })
+
+	// Calling Close multiple times must not panic or block.
+	conn.Close()
+	conn.Close()
+	conn.Close()
+}
+
+func TestConnLargeMessage(t *testing.T) {
+	// Messages larger than the 4096-byte bufio buffer must be read correctly.
+	handler := HandlerFunc(func(_ context.Context, _ *Conn, req *Request) (any, error) {
+		var params map[string]string
+		if err := json.Unmarshal(*req.Params, &params); err != nil {
+			return nil, err
+		}
+		return params, nil
+	})
+	client, _ := newTestPair(t, handler)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Build a params object whose JSON representation exceeds 4KB.
+	params := map[string]string{"data": strings.Repeat("x", 16*1024)}
+	var result map[string]string
+	if err := client.Call(ctx, "echo", params, &result); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result["data"] != params["data"] {
+		t.Errorf("large message roundtrip failed: got %d bytes, want %d", len(result["data"]), len(params["data"]))
+	}
+}
+
+func TestConnCallUnmarshalableParams(t *testing.T) {
+	// Call must clean up the pending entry and return an error if params
+	// cannot be marshaled, without leaving a leaked entry in c.pend.
+	client, _ := newTestPair(t, HandlerFunc(func(_ context.Context, _ *Conn, _ *Request) (any, error) {
+		return nil, nil
+	}))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	// Channels cannot be marshaled to JSON.
+	err := client.Call(ctx, "foo", make(chan int), nil)
+	if err == nil {
+		t.Fatal("expected marshal error, got nil")
+	}
+
+	// The connection must still be usable after the failed call.
+	if err := client.Call(ctx, "foo", nil, nil); err != nil {
+		t.Fatalf("subsequent Call failed: %v", err)
+	}
+}
+
+func TestConnHandlerServerPush(t *testing.T) {
+	// A handler may call conn.Notify to push messages to the client while
+	// processing a request — the core LSP server-push pattern
+	// (window/showMessage, $/progress, etc.).
+	pushReceived := make(chan string, 1)
+
+	clientConn, serverConn := net.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	clientHandler := HandlerFunc(func(_ context.Context, _ *Conn, req *Request) (any, error) {
+		if req.Notif {
+			pushReceived <- req.Method
+		}
+		return nil, nil
+	})
+	serverHandler := HandlerFunc(func(ctx context.Context, conn *Conn, req *Request) (any, error) {
+		// Push a notification back to the client before responding.
+		if err := conn.Notify(ctx, "window/logMessage", map[string]string{"message": "hello"}); err != nil {
+			return nil, err
+		}
+		return "ok", nil
+	})
+
+	server := NewConn(ctx, serverConn, serverHandler)
+	client := NewConn(ctx, clientConn, clientHandler)
+	t.Cleanup(func() {
+		client.Close()
+		server.Close()
+	})
+
+	var result string
+	if err := client.Call(ctx, "textDocument/hover", nil, &result); err != nil {
+		t.Fatalf("Call: %v", err)
+	}
+	if result != "ok" {
+		t.Errorf("result: got %q, want %q", result, "ok")
+	}
+
+	select {
+	case method := <-pushReceived:
+		if method != "window/logMessage" {
+			t.Errorf("push method: got %q, want window/logMessage", method)
+		}
+	case <-ctx.Done():
+		t.Fatal("timeout waiting for server push notification")
+	}
+}
+
 func TestConnMalformedJSONDropped(t *testing.T) {
 	// A frame with valid Content-Length but invalid JSON body must be silently
 	// dropped; the connection must remain usable for subsequent valid messages.
