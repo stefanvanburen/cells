@@ -376,9 +376,9 @@ func TestConnNotifyNoResponse(t *testing.T) {
 
 func TestConnConcurrentCalls(t *testing.T) {
 	// Multiple in-flight calls must be matched to their responses by ID, even
-	// when responses arrive out of order.
+	// when responses arrive out of order. Each goroutine records the method it
+	// sent and the method the server echoed back; they must match.
 	handler := HandlerFunc(func(_ context.Context, _ *Conn, req *Request) (any, error) {
-		// Echo the method name so callers can verify they got the right response.
 		return map[string]string{"method": req.Method}, nil
 	})
 	client, _ := newTestPair(t, handler)
@@ -388,8 +388,9 @@ func TestConnConcurrentCalls(t *testing.T) {
 
 	const n = 20
 	type callResult struct {
-		method string
-		err    error
+		sent     string
+		received string
+		err      error
 	}
 	results := make(chan callResult, n)
 	methods := make([]string, n)
@@ -400,18 +401,17 @@ func TestConnConcurrentCalls(t *testing.T) {
 		go func() {
 			var result map[string]string
 			err := client.Call(ctx, method, nil, &result)
-			results <- callResult{method: result["method"], err: err}
+			results <- callResult{sent: method, received: result["method"], err: err}
 		}()
 	}
 	for range n {
 		r := <-results
 		if r.err != nil {
-			t.Errorf("Call error: %v", r.err)
+			t.Errorf("Call %q error: %v", r.sent, r.err)
 			continue
 		}
-		// Each response must match one of our methods; verify non-empty.
-		if r.method == "" {
-			t.Error("got empty method in response")
+		if r.sent != r.received {
+			t.Errorf("ID mismatch: sent %q, got back %q", r.sent, r.received)
 		}
 	}
 }
@@ -451,5 +451,104 @@ func TestConnCallContextCancel(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("timeout waiting for Call to return after cancel")
+	}
+}
+
+func TestIDString(t *testing.T) {
+	tests := []struct {
+		id   ID
+		want string
+	}{
+		{ID{Num: 0}, "0"},
+		{ID{Num: 42}, "42"},
+		{ID{Str: "req-1", IsString: true}, `"req-1"`},
+	}
+	for _, tt := range tests {
+		got := tt.id.String()
+		if got != tt.want {
+			t.Errorf("ID%+v.String() = %q, want %q", tt.id, got, tt.want)
+		}
+	}
+}
+
+func TestErrorError(t *testing.T) {
+	e := &Error{Code: CodeMethodNotFound, Message: "method not found"}
+	want := "jsonrpc2: code -32601 message: method not found"
+	if got := e.Error(); got != want {
+		t.Errorf("got %q, want %q", got, want)
+	}
+}
+
+func TestConnBidirectional(t *testing.T) {
+	// Both ends of a Conn can initiate calls; the connection is symmetric.
+	// This mirrors LSP server-push scenarios (window/showMessage, etc.).
+	clientConn, serverConn := net.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	clientHandler := HandlerFunc(func(_ context.Context, _ *Conn, req *Request) (any, error) {
+		return map[string]string{"from": "client"}, nil
+	})
+	serverHandler := HandlerFunc(func(_ context.Context, _ *Conn, req *Request) (any, error) {
+		return map[string]string{"from": "server"}, nil
+	})
+
+	server := NewConn(ctx, serverConn, serverHandler)
+	client := NewConn(ctx, clientConn, clientHandler)
+	t.Cleanup(func() {
+		client.Close()
+		server.Close()
+	})
+
+	var clientResult map[string]string
+	if err := client.Call(ctx, "serverMethod", nil, &clientResult); err != nil {
+		t.Fatalf("client.Call: %v", err)
+	}
+	if clientResult["from"] != "server" {
+		t.Errorf("client.Call: got %v, want from=server", clientResult)
+	}
+
+	var serverResult map[string]string
+	if err := server.Call(ctx, "clientMethod", nil, &serverResult); err != nil {
+		t.Fatalf("server.Call: %v", err)
+	}
+	if serverResult["from"] != "client" {
+		t.Errorf("server.Call: got %v, want from=client", serverResult)
+	}
+}
+
+func TestConnMalformedJSONDropped(t *testing.T) {
+	// A frame with valid Content-Length but invalid JSON body must be silently
+	// dropped; the connection must remain usable for subsequent valid messages.
+	clientConn, serverConn := net.Pipe()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	received := make(chan string, 1)
+	server := NewConn(ctx, serverConn, HandlerFunc(func(_ context.Context, _ *Conn, req *Request) (any, error) {
+		received <- req.Method
+		return nil, nil
+	}))
+	t.Cleanup(func() {
+		clientConn.Close()
+		server.Close()
+	})
+
+	// Write a frame whose body is not valid JSON, then a valid notification.
+	badBody := "{{{{{" // 5 bytes of invalid JSON
+	validMsg := `{"jsonrpc":"2.0","method":"$/ping"}`
+	payload := fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(badBody), badBody) +
+		fmt.Sprintf("Content-Length: %d\r\n\r\n%s", len(validMsg), validMsg)
+	if _, err := clientConn.Write([]byte(payload)); err != nil {
+		t.Fatalf("write: %v", err)
+	}
+
+	select {
+	case method := <-received:
+		if method != "$/ping" {
+			t.Errorf("got %q, want $/ping", method)
+		}
+	case <-ctx.Done():
+		t.Fatal("timeout: connection not usable after malformed JSON frame")
 	}
 }
