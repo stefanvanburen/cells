@@ -211,6 +211,9 @@ func TestHover(t *testing.T) {
 		{name: "link_type_conv_timestamp", file: "testdata/hover/comprehensive.cel", line: 103, char: 0, contains: "celbyexample.com/type-conversions/#time-conversions", desc: "'timestamp' links to celbyexample.com"},
 		{name: "link_type_conv_dyn", file: "testdata/hover/comprehensive.cel", line: 23, char: 0, contains: "celbyexample.com/type-conversions/#dynamic-type", desc: "'dyn' links to celbyexample.com"},
 		{name: "link_timestamp_method", file: "testdata/hover/timestamp_methods.cel", line: 0, char: 34, contains: "celbyexample.com/time/#timestamp-components", desc: "'getFullYear' links to celbyexample.com"},
+		{name: "link_index", file: "testdata/hover/index.cel", line: 0, char: 9, contains: "celbyexample.com/lists/", desc: "'[' index operator links to celbyexample.com"},
+		{name: "index_header", file: "testdata/hover/index.cel", line: 0, char: 9, contains: "**Operator**: `[`", desc: "index operator shows header"},
+		{name: "index_description", file: "testdata/hover/index.cel", line: 0, char: 9, contains: "select a value from a list", desc: "index operator shows description"},
 
 		// Token boundary tests
 		{name: "token_boundary_and_first", file: "testdata/hover/operators.cel", line: 0, char: 6, contains: "logically AND", desc: "'&&' first char"},

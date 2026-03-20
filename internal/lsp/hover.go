@@ -377,6 +377,8 @@ func celFunctionDocumentationLink(funcName string) string {
 		return celByExampleLink("collections/#membership-and-access")
 	case operators.Conditional:
 		return celByExampleLink("ternary/")
+	case operators.Index:
+		return celByExampleLink("lists/")
 	// String functions
 	case overloads.Size:
 		return celByExampleLink("strings/#size")

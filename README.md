@@ -21,6 +21,61 @@ $ go install github.com/stefanvanburen/cells/cmd/cells@latest
 * Variable renaming
 * Inlay hints (expression evaluation)
 
+## CLI
+
+In addition to operating as a language server, `cells` provides CLI commands for use outside an editor.
+
+### `cells format`
+
+Format CEL source files.
+With no arguments, reads from stdin and writes to stdout.
+
+```console
+$ echo "1+2" | cells format
+1 + 2
+$ cells format file.cel
+$ cells format --write file.cel
+$ cells format --diff file.cel
+$ cells format --diff --write file.cel
+```
+
+### `cells check`
+
+Check CEL source files for parse and type errors.
+Prints `file:line:col: error: message` for each diagnostic and exits 1 if any are found.
+
+```console
+$ cells check file.cel
+$ cells check *.cel
+```
+
+### `cells hover`
+
+Show documentation for the element at a given position (`file:line:col`, 1-indexed).
+
+```console
+$ cells hover file.cel:1:7
+```
+
+### `cells references`
+
+List all references to the identifier at a given position.
+Each reference is printed as `file:line:col`.
+
+```console
+$ cells references file.cel:1:1
+```
+
+### `cells rename`
+
+Rename the identifier at a given position.
+Without `--write`, prints the updated content to stdout.
+
+```console
+$ cells rename --new-name=newVar file.cel:1:1
+$ cells rename --new-name=newVar --write file.cel:1:1
+```
+
 ## Usage
 
 ### Neovim

@@ -36,6 +36,10 @@ func celOperatorSymbol(funcName string) (string, bool) {
 	if funcName == operators.Conditional {
 		return "?", true
 	}
+	// FindReverse returns ("", true) for _[_], so handle it explicitly.
+	if funcName == operators.Index {
+		return "[", true
+	}
 	return "", false
 }
 

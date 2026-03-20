@@ -62,7 +62,7 @@ type server struct {
 }
 
 func newServer() (*server, error) {
-	celEnv, err := cel.NewEnv(cel.EnableMacroCallTracking())
+	celEnv, err := newCELEnv()
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CEL environment: %w", err)
 	}
