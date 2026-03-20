@@ -9,6 +9,7 @@ import (
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common"
 	"github.com/google/cel-go/common/ast"
+	"github.com/google/cel-go/common/operators"
 	"github.com/google/cel-go/common/overloads"
 	"github.com/google/cel-go/common/types"
 	"github.com/stefanvanburen/cells/internal/jsonrpc2"
@@ -298,39 +299,130 @@ func celFunctionHover(funcName string, celEnv *cel.Env) string {
 	if !ok {
 		return ""
 	}
+	var result string
 	doc := funcDecl.Documentation()
 	if doc != nil {
 		// For operators, use the display symbol instead of the internal name.
 		if symbol, isOp := celOperatorSymbol(funcName); isOp {
-			return formatCELDoc(doc, "**Operator**: ", symbol)
+			result = formatCELDoc(doc, "**Operator**: ", symbol)
+		} else if overloads.IsTypeConversionFunction(funcName) {
+			result = formatCELDoc(doc, "**Type**: ", "")
+		} else {
+			result = formatCELDoc(doc, "", "")
 		}
-		if overloads.IsTypeConversionFunction(funcName) {
-			return formatCELDoc(doc, "**Type**: ", "")
+	} else {
+		// Fallback to simple description.
+		if desc := funcDecl.Description(); desc != "" {
+			result = fmt.Sprintf("`%s` — %s", funcName, desc)
+		} else {
+			result = fmt.Sprintf("`%s()` — function", funcName)
 		}
-		return formatCELDoc(doc, "", "")
 	}
-	// Fallback to simple description.
-	if desc := funcDecl.Description(); desc != "" {
-		return fmt.Sprintf("`%s` — %s", funcName, desc)
+	if link := celFunctionDocumentationLink(funcName); link != "" {
+		result += "\n\n" + link
 	}
-	return fmt.Sprintf("`%s()` — function", funcName)
+	return result
 }
 
 // celMacroHover returns hover markdown for a CEL macro.
 // It looks up macro documentation from the CEL environment.
 func celMacroHover(macroName string, celEnv *cel.Env) string {
+	var result string
 	for _, m := range celEnv.Macros() {
 		if m.Function() != macroName {
 			continue
 		}
 		if doc, ok := m.(common.Documentor); ok {
 			if documentation := doc.Documentation(); documentation != nil {
-				return formatCELDoc(documentation, "**Macro**: ", "")
+				result = formatCELDoc(documentation, "**Macro**: ", "")
 			}
 		}
 		break
 	}
-	return fmt.Sprintf("`%s` — macro", macroName)
+	if result == "" {
+		result = fmt.Sprintf("`%s` — macro", macroName)
+	}
+	if link := celMacroDocumentationLink(macroName); link != "" {
+		result += "\n\n" + link
+	}
+	return result
+}
+
+// celByExampleLink returns a markdown link to a page on celbyexample.com.
+func celByExampleLink(path string) string {
+	return "[CEL by Example](https://celbyexample.com/" + path + ")"
+}
+
+// celFunctionDocumentationLink returns a markdown link to external documentation for a CEL function
+// or operator. Returns an empty string if no documentation link is available.
+func celFunctionDocumentationLink(funcName string) string {
+	switch funcName {
+	// Logical operators
+	case operators.LogicalAnd:
+		return celByExampleLink("logical-operators/#and")
+	case operators.LogicalOr:
+		return celByExampleLink("logical-operators/#or")
+	case operators.LogicalNot:
+		return celByExampleLink("logical-operators/#not")
+	// Comparison operators
+	case operators.Equals, operators.NotEquals:
+		return celByExampleLink("comparison/#equality")
+	case operators.Less, operators.LessEquals, operators.Greater, operators.GreaterEquals:
+		return celByExampleLink("comparison/#ordering")
+	// Arithmetic operators
+	case operators.Add, operators.Subtract, operators.Multiply, operators.Divide, operators.Modulo:
+		return celByExampleLink("arithmetic/")
+	// Collection operators
+	case operators.In:
+		return celByExampleLink("collections/#membership-and-access")
+	case operators.Conditional:
+		return celByExampleLink("ternary/")
+	// String functions
+	case overloads.Size:
+		return celByExampleLink("strings/#size")
+	case overloads.Contains, overloads.StartsWith, overloads.EndsWith:
+		return celByExampleLink("strings/#substring-search")
+	case overloads.Matches:
+		return celByExampleLink("strings/#regular-expressions")
+	// Timestamp functions
+	case overloads.TimeGetFullYear, overloads.TimeGetMonth, overloads.TimeGetDate,
+		overloads.TimeGetDayOfMonth, overloads.TimeGetDayOfWeek, overloads.TimeGetDayOfYear,
+		overloads.TimeGetHours, overloads.TimeGetMinutes, overloads.TimeGetSeconds,
+		overloads.TimeGetMilliseconds:
+		return celByExampleLink("time/#timestamp-components")
+	// Type conversions
+	case overloads.TypeConvertInt, overloads.TypeConvertUint, overloads.TypeConvertDouble:
+		return celByExampleLink("type-conversions/#numeric-conversions")
+	case overloads.TypeConvertString:
+		return celByExampleLink("type-conversions/#string-conversions")
+	case overloads.TypeConvertBytes:
+		return celByExampleLink("type-conversions/#bytes-conversions")
+	case overloads.TypeConvertTimestamp, overloads.TypeConvertDuration:
+		return celByExampleLink("type-conversions/#time-conversions")
+	case overloads.TypeConvertDyn:
+		return celByExampleLink("type-conversions/#dynamic-type")
+	}
+	return ""
+}
+
+// celMacroDocumentationLink returns a markdown link to external documentation for a CEL macro.
+// Returns an empty string if no documentation link is available.
+func celMacroDocumentationLink(macroName string) string {
+	switch macroName {
+	case operators.Has:
+		return celByExampleLink("has/")
+	case operators.All:
+		return celByExampleLink("all/")
+	case operators.Exists:
+		return celByExampleLink("exists/")
+	case operators.ExistsOne:
+		return celByExampleLink("exists-one/")
+	case operators.Filter:
+		return celByExampleLink("filter/")
+	case operators.Map:
+		return celByExampleLink("map-macro/")
+	}
+	return ""
 }
 
 // formatCELDoc formats a common.Doc into markdown.
