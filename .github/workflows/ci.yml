@@ -9,11 +9,17 @@ on:
     # Run at 10am daily.
     - cron: "0 10 * * *"
 
+permissions: {}
+
 jobs:
   ci:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
     steps:
     - uses: actions/checkout@v6
+      with:
+        persist-credentials: false
     - uses: actions/setup-go@v6
       with:
         go-version-file: 'go.mod'
