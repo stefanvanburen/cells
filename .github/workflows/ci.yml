@@ -23,5 +23,5 @@ jobs:
     - uses: actions/setup-go@v6
       with:
         go-version-file: 'go.mod'
-    - uses: extractions/setup-just@v3
+    - uses: extractions/setup-just@v4
     - run: just
