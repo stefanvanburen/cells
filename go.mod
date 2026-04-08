@@ -3,7 +3,7 @@ module github.com/stefanvanburen/cells
 go 1.26.0
 
 require (
-	github.com/google/cel-go v0.27.0
+	github.com/google/cel-go v0.28.0
 	github.com/nalgeon/be v0.3.0
 	github.com/pressly/cli v0.6.0
 	znkr.io/diff v1.0.1
