@@ -90,16 +90,6 @@ vim.lsp.config("cells", {
 vim.lsp.enable("cells")
 ```
 
-Neovim doesn't recognize `.cel` files by default
-(until [0.12 is released](https://github.com/neovim/neovim/pull/37834)),
-so you'll also need to add a filetype detection rule:
-
-```lua
-vim.filetype.add({
-  extension = {
-    cel = "cel",
-  },
-})
-```
+Neovim recognizes `.cel` files by default as of [0.12](https://github.com/neovim/neovim/pull/37834).
 
 To verify it's working, open a `.cel` file and run `:checkhealth lsp` or `:LspInfo`.
