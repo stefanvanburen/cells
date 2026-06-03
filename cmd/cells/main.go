@@ -16,14 +16,9 @@ import (
 )
 
 func main() {
-	var root *cli.Command
-	root = &cli.Command{
-		Name:      "cells",
-		ShortHelp: "A language server for CEL (Common Expression Language)",
-		Exec: func(_ context.Context, _ *cli.State) error {
-			fmt.Println(cli.DefaultUsage(root))
-			return nil
-		},
+	root := &cli.Command{
+		Name:    "cells",
+		Summary: "A language server for CEL (Common Expression Language)",
 		SubCommands: []*cli.Command{
 			serveCommand(),
 			formatCommand(),
@@ -52,8 +47,8 @@ func (e *exitError) Error() string { return "" }
 
 func serveCommand() *cli.Command {
 	return &cli.Command{
-		Name:      "serve",
-		ShortHelp: "Start the CEL language server (communicates over stdin/stdout)",
+		Name:    "serve",
+		Summary: "Start the CEL language server (communicates over stdin/stdout)",
 		Exec: func(_ context.Context, _ *cli.State) error {
 			return lsp.Serve()
 		},
@@ -62,14 +57,14 @@ func serveCommand() *cli.Command {
 
 func formatCommand() *cli.Command {
 	return &cli.Command{
-		Name:      "format",
-		ShortHelp: "Format CEL source files",
-		Usage:     "cells format [--write] [--diff] [file...]",
+		Name:    "format",
+		Summary: "Format CEL source files",
+		Usage:   "cells format [--write] [--diff] [file...]",
 		Flags: cli.FlagsFunc(func(f *flag.FlagSet) {
 			f.Bool("write", false, "write result to source file instead of stdout")
 			f.Bool("diff", false, "display diffs instead of rewriting files")
 		}),
-		FlagOptions: []cli.FlagOption{
+		FlagConfigs: []cli.FlagConfig{
 			{Name: "write", Short: "w"},
 			{Name: "diff", Short: "d"},
 		},
@@ -139,9 +134,9 @@ func formatCommand() *cli.Command {
 
 func checkCommand() *cli.Command {
 	return &cli.Command{
-		Name:      "check",
-		ShortHelp: "Check CEL source files for parse and type errors",
-		Usage:     "cells check <file> [file...]",
+		Name:    "check",
+		Summary: "Check CEL source files for parse and type errors",
+		Usage:   "cells check <file> [file...]",
 		Exec: func(_ context.Context, s *cli.State) error {
 			if len(s.Args) == 0 {
 				return fmt.Errorf("check: no files specified")
@@ -175,9 +170,9 @@ func checkCommand() *cli.Command {
 
 func hoverCommand() *cli.Command {
 	return &cli.Command{
-		Name:      "hover",
-		ShortHelp: "Show documentation for the element at the given position",
-		Usage:     "cells hover <file>:<line>:<col>",
+		Name:    "hover",
+		Summary: "Show documentation for the element at the given position",
+		Usage:   "cells hover <file>:<line>:<col>",
 		Exec: func(_ context.Context, s *cli.State) error {
 			if len(s.Args) != 1 {
 				return fmt.Errorf("hover: expected one argument of the form file:line:col")
@@ -204,9 +199,9 @@ func hoverCommand() *cli.Command {
 
 func referencesCommand() *cli.Command {
 	return &cli.Command{
-		Name:      "references",
-		ShortHelp: "List all references to the element at the given position",
-		Usage:     "cells references <file>:<line>:<col>",
+		Name:    "references",
+		Summary: "List all references to the element at the given position",
+		Usage:   "cells references <file>:<line>:<col>",
 		Exec: func(_ context.Context, s *cli.State) error {
 			if len(s.Args) != 1 {
 				return fmt.Errorf("references: expected one argument of the form file:line:col")
@@ -233,14 +228,14 @@ func referencesCommand() *cli.Command {
 
 func renameCommand() *cli.Command {
 	return &cli.Command{
-		Name:      "rename",
-		ShortHelp: "Rename the identifier at the given position",
-		Usage:     "cells rename --new-name=<name> [--write] <file>:<line>:<col>",
+		Name:    "rename",
+		Summary: "Rename the identifier at the given position",
+		Usage:   "cells rename --new-name=<name> [--write] <file>:<line>:<col>",
 		Flags: cli.FlagsFunc(func(f *flag.FlagSet) {
 			f.String("new-name", "", "new name for the identifier")
 			f.Bool("write", false, "write result to source file instead of stdout")
 		}),
-		FlagOptions: []cli.FlagOption{
+		FlagConfigs: []cli.FlagConfig{
 			{Name: "new-name", Required: true},
 			{Name: "write", Short: "w"},
 		},
