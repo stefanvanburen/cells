@@ -2,7 +2,8 @@ package lsp
 
 import (
 	"github.com/google/cel-go/common/ast"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
+	lspuri "go.lsp.dev/uri"
 )
 
 // IdentifierVisitor is a callback function that processes each identifier found in the AST.
@@ -27,7 +28,7 @@ func CollectIdentifierHighlights(expr ast.Expr, sourceInfo *ast.SourceInfo, file
 }
 
 // CollectIdentifierReferences walks the AST and collects all locations for an identifier.
-func CollectIdentifierReferences(expr ast.Expr, sourceInfo *ast.SourceInfo, fileContent string, identName string, uri protocol.DocumentURI) []protocol.Location {
+func CollectIdentifierReferences(expr ast.Expr, sourceInfo *ast.SourceInfo, fileContent string, identName string, uri lspuri.URI) []protocol.Location {
 	var locations []protocol.Location
 	collectReferencesInExpr(expr, sourceInfo, fileContent, identName, uri, &locations)
 	return locations
@@ -85,7 +86,7 @@ func collectHighlightsInExpr(expr ast.Expr, sourceInfo *ast.SourceInfo, fileCont
 }
 
 // collectReferencesInExpr recursively collects all occurrences of identName.
-func collectReferencesInExpr(expr ast.Expr, sourceInfo *ast.SourceInfo, fileContent string, identName string, uri protocol.DocumentURI, locations *[]protocol.Location) {
+func collectReferencesInExpr(expr ast.Expr, sourceInfo *ast.SourceInfo, fileContent string, identName string, uri lspuri.URI, locations *[]protocol.Location) {
 	if expr == nil {
 		return
 	}
@@ -201,7 +202,7 @@ func recurseAllHighlights(expr ast.Expr, sourceInfo *ast.SourceInfo, fileContent
 }
 
 // recurseAllReferences handles recursion for all expression types (for references).
-func recurseAllReferences(expr ast.Expr, sourceInfo *ast.SourceInfo, fileContent string, identName string, uri protocol.DocumentURI, locations *[]protocol.Location) {
+func recurseAllReferences(expr ast.Expr, sourceInfo *ast.SourceInfo, fileContent string, identName string, uri lspuri.URI, locations *[]protocol.Location) {
 	switch expr.Kind() {
 	case ast.CallKind:
 		call := expr.AsCall()

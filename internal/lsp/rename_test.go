@@ -4,28 +4,31 @@ import (
 	"testing"
 
 	"github.com/nalgeon/be"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/jsonrpc2"
+	"go.lsp.dev/protocol"
+	lspuri "go.lsp.dev/uri"
 )
 
 // requestRename sends a textDocument/rename request at the given position.
-func requestRename(t *testing.T, conn *jsonrpc2.Conn, uri protocol.DocumentURI, pos protocol.Position, newName string) *protocol.WorkspaceEdit {
+func requestRename(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos protocol.Position, newName string) *protocol.WorkspaceEdit {
 	t.Helper()
 	var result *protocol.WorkspaceEdit
-	err := conn.Call(t.Context(), "textDocument/rename", protocol.RenameParams{
-		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
-		Position:     pos,
-		NewName:      newName,
+	_, err := conn.Call(t.Context(), "textDocument/rename", protocol.RenameParams{
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+			Position:     pos,
+		},
+		NewName: newName,
 	}, &result)
 	be.Err(t, err, nil)
 	return result
 }
 
 // requestPrepareRename sends a textDocument/prepareRename request at the given position.
-func requestPrepareRename(t *testing.T, conn *jsonrpc2.Conn, uri protocol.DocumentURI, pos protocol.Position) any {
+func requestPrepareRename(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos protocol.Position) any {
 	t.Helper()
 	var result any
-	err := conn.Call(t.Context(), "textDocument/prepareRename", map[string]any{
+	_, err := conn.Call(t.Context(), "textDocument/prepareRename", map[string]any{
 		"textDocument": map[string]any{"uri": uri},
 		"position":     map[string]any{"line": pos.Line, "character": pos.Character},
 	}, &result)

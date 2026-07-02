@@ -1,22 +1,16 @@
 package lsp
 
 import (
-	"encoding/json"
+	"context"
 	"strings"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common"
 	"github.com/google/cel-go/common/ast"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
 )
 
-func (s *server) signatureHelp(req *jsonrpc2.Request) (any, error) {
-	var params protocol.SignatureHelpParams
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
-
+func (s *server) SignatureHelp(_ context.Context, params *protocol.SignatureHelpParams) (*protocol.SignatureHelp, error) {
 	s.mu.Lock()
 	f := s.files[params.TextDocument.URI]
 	s.mu.Unlock()
@@ -68,10 +62,14 @@ func computeSignatureHelp(f *file, celEnv *cel.Env, pos protocol.Position) (*pro
 	// Return the first signature as the active one, with the computed active parameter.
 	return &protocol.SignatureHelp{
 		Signatures:      sigs,
-		ActiveSignature: 0,
-		ActiveParameter: paramIndex,
+		ActiveSignature: &firstSignature,
+		ActiveParameter: protocol.NewNullable(paramIndex),
 	}, nil
 }
+
+// firstSignature is always the active signature index; shared across
+// requests to avoid allocating a *uint32 per call.
+var firstSignature uint32
 
 // findCallAtPosition walks the AST to find a call expression that contains the cursor,
 // and returns the call and the active parameter index (0-based).
@@ -232,9 +230,7 @@ func generateSignatures(funcDecl any, isMemberFunction bool) []protocol.Signatur
 				Parameters: extractParametersFromSignature(doc.Signature, doc),
 			}
 			if doc.Description != "" {
-				sig.Documentation = &protocol.Or_SignatureInformation_documentation{
-					Value: doc.Description,
-				}
+				sig.Documentation = protocol.String(doc.Description)
 			}
 			return []protocol.SignatureInformation{sig}
 		}
@@ -249,9 +245,7 @@ func generateSignatures(funcDecl any, isMemberFunction bool) []protocol.Signatur
 				Parameters: extractParametersFromSignature(child.Signature, child),
 			}
 			if child.Description != "" {
-				sig.Documentation = &protocol.Or_SignatureInformation_documentation{
-					Value: child.Description,
-				}
+				sig.Documentation = protocol.String(child.Description)
 			}
 			sigs = append(sigs, sig)
 		}
@@ -320,9 +314,7 @@ func extractParametersFromSignature(signature string, doc *common.Doc) []protoco
 				if paramStr != "" {
 					paramName := extractParamName(paramStr)
 					params = append(params, protocol.ParameterInformation{
-						Label: protocol.Or_ParameterInformation_label{
-							Value: paramName,
-						},
+						Label: protocol.String(paramName),
 					})
 				}
 				current.Reset()
@@ -339,9 +331,7 @@ func extractParametersFromSignature(signature string, doc *common.Doc) []protoco
 	if paramStr != "" {
 		paramName := extractParamName(paramStr)
 		params = append(params, protocol.ParameterInformation{
-			Label: protocol.Or_ParameterInformation_label{
-				Value: paramName,
-			},
+			Label: protocol.String(paramName),
 		})
 	}
 

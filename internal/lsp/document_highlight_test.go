@@ -4,15 +4,16 @@ import (
 	"testing"
 
 	"github.com/nalgeon/be"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/jsonrpc2"
+	"go.lsp.dev/protocol"
+	lspuri "go.lsp.dev/uri"
 )
 
 // requestDocumentHighlight sends a textDocument/documentHighlight request at the given position.
-func requestDocumentHighlight(t *testing.T, conn *jsonrpc2.Conn, uri protocol.DocumentURI, pos protocol.Position) []protocol.DocumentHighlight {
+func requestDocumentHighlight(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos protocol.Position) []protocol.DocumentHighlight {
 	t.Helper()
 	var result []protocol.DocumentHighlight
-	err := conn.Call(t.Context(), "textDocument/documentHighlight", protocol.DocumentHighlightParams{
+	_, err := conn.Call(t.Context(), "textDocument/documentHighlight", protocol.DocumentHighlightParams{
 		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
 			TextDocument: protocol.TextDocumentIdentifier{URI: uri},
 			Position:     pos,

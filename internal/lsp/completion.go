@@ -2,7 +2,7 @@ package lsp
 
 import (
 	"cmp"
-	"encoding/json"
+	"context"
 	"fmt"
 	"slices"
 	"strings"
@@ -11,20 +11,14 @@ import (
 	"github.com/google/cel-go/common/decls"
 	"github.com/google/cel-go/common/operators"
 	"github.com/google/cel-go/common/types"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
 )
 
 // celKeywords are the literal keywords in CEL. These are language-level
 // constants that aren't discoverable through cel-go's function or macro APIs.
 var celKeywords = []string{"true", "false", "null"}
 
-func (s *server) completion(req *jsonrpc2.Request) (any, error) {
-	var params protocol.CompletionParams
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
-
+func (s *server) Completion(_ context.Context, params *protocol.CompletionParams) (protocol.CompletionResult, error) {
 	s.mu.Lock()
 	f := s.files[params.TextDocument.URI]
 	s.mu.Unlock()
@@ -226,14 +220,13 @@ func memberCompletionItems(celEnv *cel.Env, receiverType *types.Type) []protocol
 			continue
 		}
 
-		snippet := protocol.SnippetTextFormat
 		items = append(items, protocol.CompletionItem{
 			Label:            name,
-			Kind:             protocol.MethodCompletion,
-			Detail:           formatOverloadSignature(fn.Name(), matchingOverloads[0]),
+			Kind:             protocol.CompletionItemKindMethod,
+			Detail:           protocol.NewOptional(formatOverloadSignature(fn.Name(), matchingOverloads[0])),
 			Documentation:    docString(fn.Description()),
-			InsertText:       name + "($1)",
-			InsertTextFormat: &snippet,
+			InsertText:       protocol.NewOptional(name + "($1)"),
+			InsertTextFormat: protocol.InsertTextFormatSnippet,
 		})
 	}
 	slices.SortFunc(items, func(a, b protocol.CompletionItem) int {
@@ -266,14 +259,13 @@ func globalCompletionItems(celEnv *cel.Env, expectedType *types.Type) []protocol
 			continue
 		}
 
-		snippet := protocol.SnippetTextFormat
 		items = append(items, protocol.CompletionItem{
 			Label:            name,
-			Kind:             protocol.FunctionCompletion,
-			Detail:           globalFunctionDetail(fn),
+			Kind:             protocol.CompletionItemKindFunction,
+			Detail:           protocol.NewOptional(globalFunctionDetail(fn)),
 			Documentation:    docString(fn.Description()),
-			InsertText:       name + "($1)",
-			InsertTextFormat: &snippet,
+			InsertText:       protocol.NewOptional(name + "($1)"),
+			InsertTextFormat: protocol.InsertTextFormatSnippet,
 		})
 	}
 	slices.SortFunc(items, func(a, b protocol.CompletionItem) int {
@@ -295,13 +287,12 @@ func macroCompletionItems(celEnv *cel.Env, _ *types.Type) []protocol.CompletionI
 		}
 		seen[name] = true
 
-		snippet := protocol.SnippetTextFormat
 		items = append(items, protocol.CompletionItem{
 			Label:            name,
-			Kind:             protocol.FunctionCompletion,
-			Detail:           "macro",
-			InsertText:       name + "($1)",
-			InsertTextFormat: &snippet,
+			Kind:             protocol.CompletionItemKindFunction,
+			Detail:           protocol.NewOptional("macro"),
+			InsertText:       protocol.NewOptional(name + "($1)"),
+			InsertTextFormat: protocol.InsertTextFormatSnippet,
 		})
 	}
 	slices.SortFunc(items, func(a, b protocol.CompletionItem) int {
@@ -327,8 +318,8 @@ func keywordCompletionItems(celEnv *cel.Env, expectedType *types.Type) []protoco
 		}
 		items = append(items, protocol.CompletionItem{
 			Label:  kw,
-			Kind:   protocol.KeywordCompletion,
-			Detail: kwType.String(),
+			Kind:   protocol.CompletionItemKindKeyword,
+			Detail: protocol.NewOptional(kwType.String()),
 		})
 	}
 	return items
@@ -372,14 +363,12 @@ func formatOverloadSignature(name string, o *decls.OverloadDecl) string {
 	return fmt.Sprintf("%s%s(%s) -> %s", prefix, name, strings.Join(parts, ", "), result)
 }
 
-func docString(s string) *protocol.Or_CompletionItem_documentation {
+func docString(s string) protocol.InlayHintTooltip {
 	if s == "" {
 		return nil
 	}
-	return &protocol.Or_CompletionItem_documentation{
-		Value: protocol.MarkupContent{
-			Kind:  protocol.Markdown,
-			Value: s,
-		},
+	return &protocol.MarkupContent{
+		Kind:  protocol.MarkupKindMarkdown,
+		Value: s,
 	}
 }

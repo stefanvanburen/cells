@@ -4,15 +4,16 @@ import (
 	"testing"
 
 	"github.com/nalgeon/be"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/jsonrpc2"
+	"go.lsp.dev/protocol"
+	lspuri "go.lsp.dev/uri"
 )
 
 // requestReferences sends a textDocument/references request at the given position.
-func requestReferences(t *testing.T, conn *jsonrpc2.Conn, uri protocol.DocumentURI, pos protocol.Position) []protocol.Location {
+func requestReferences(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos protocol.Position) []protocol.Location {
 	t.Helper()
 	var result []protocol.Location
-	err := conn.Call(t.Context(), "textDocument/references", map[string]any{
+	_, err := conn.Call(t.Context(), "textDocument/references", map[string]any{
 		"textDocument": map[string]any{"uri": uri},
 		"position":     map[string]any{"line": pos.Line, "character": pos.Character},
 		"context":      map[string]any{"includeDeclaration": true},

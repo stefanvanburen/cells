@@ -4,7 +4,7 @@ import (
 	"testing"
 
 	"github.com/nalgeon/be"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
 )
 
 // getInlayHints sends a textDocument/inlayHint request and returns the result.
@@ -15,7 +15,7 @@ func getInlayHints(t *testing.T, celFile string) []protocol.InlayHint {
 	clientConn, testURI := setupLSPServer(t, testPath)
 
 	var result []protocol.InlayHint
-	err := clientConn.Call(ctx, "textDocument/inlayHint", protocol.InlayHintParams{
+	_, err := clientConn.Call(ctx, "textDocument/inlayHint", protocol.InlayHintParams{
 		TextDocument: protocol.TextDocumentIdentifier{
 			URI: testURI,
 		},
@@ -83,8 +83,10 @@ func TestInlayHints(t *testing.T) {
 
 			if tt.expectHint {
 				be.True(t, len(hints) > 0)
-				be.True(t, len(hints[0].Label) > 0)
-				hintText := hints[0].Label[0].Value
+				labelParts, ok := hints[0].Label.(protocol.InlayHintLabelPartSlice)
+				be.True(t, ok)
+				be.True(t, len(labelParts) > 0)
+				hintText := labelParts[0].Value
 				be.True(t, len(hintText) > 0)
 				// Check if result is in the hint (after the arrow)
 				be.True(t, len(hintText) >= 2)

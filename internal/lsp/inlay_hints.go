@@ -1,23 +1,21 @@
 package lsp
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"strings"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/types"
 	"github.com/google/cel-go/common/types/ref"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
 )
 
-func (s *server) inlayHints(req *jsonrpc2.Request) (any, error) {
-	var params protocol.InlayHintParams
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
+// paddingLeft is always true for the hints below; shared across requests to
+// avoid allocating a *bool per hint.
+var paddingLeft = true
 
+func (s *server) InlayHint(_ context.Context, params *protocol.InlayHintParams) ([]protocol.InlayHint, error) {
 	s.mu.Lock()
 	f := s.files[params.TextDocument.URI]
 	s.mu.Unlock()
@@ -72,13 +70,13 @@ func computeInlayHints(f *file, celEnv *cel.Env) ([]protocol.InlayHint, error) {
 
 	hint := protocol.InlayHint{
 		Position: protocol.Position{Line: endLine, Character: endCol},
-		Label: []protocol.InlayHintLabelPart{
+		Label: protocol.InlayHintLabelPartSlice{
 			{
 				Value: fmt.Sprintf("→ %s (%s)", result, typeStr),
 			},
 		},
 		Kind:        protocol.InlayHintKind(1), // Type hint kind
-		PaddingLeft: true,
+		PaddingLeft: &paddingLeft,
 	}
 
 	return []protocol.InlayHint{hint}, nil

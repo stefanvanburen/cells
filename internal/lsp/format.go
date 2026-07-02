@@ -1,20 +1,14 @@
 package lsp
 
 import (
-	"encoding/json"
+	"context"
 	"strings"
 
 	"github.com/google/cel-go/cel"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
 )
 
-func (s *server) formatting(req *jsonrpc2.Request) (any, error) {
-	var params protocol.DocumentFormattingParams
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
-
+func (s *server) Formatting(_ context.Context, params *protocol.DocumentFormattingParams) ([]protocol.TextEdit, error) {
 	s.mu.Lock()
 	f := s.files[params.TextDocument.URI]
 	s.mu.Unlock()

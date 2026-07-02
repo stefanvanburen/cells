@@ -1,22 +1,20 @@
 package lsp_test
 
 import (
-	"context"
-	"net"
 	"os"
 	"sort"
 	"strings"
 	"testing"
 
 	"github.com/nalgeon/be"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/jsonrpc2"
+	"go.lsp.dev/protocol"
+	lspuri "go.lsp.dev/uri"
 )
 
 // setupCompletionServer initializes an LSP server and opens celFile for completion testing.
 // Returns the client connection, document URI, and file content.
-func setupCompletionServer(t *testing.T, celFile string) (*jsonrpc2.Conn, protocol.DocumentURI, string) {
+func setupCompletionServer(t *testing.T, celFile string) (jsonrpc2.Conn, lspuri.URI, string) {
 	t.Helper()
 
 	testPath := getAbsPath(t, celFile)
@@ -64,17 +62,17 @@ func endOfContent(content string) protocol.Position {
 }
 
 // requestCompletion sends a completion request at the given position.
-func requestCompletion(t *testing.T, conn *jsonrpc2.Conn, uri protocol.DocumentURI, pos protocol.Position, triggerKind protocol.CompletionTriggerKind, triggerChar string) *protocol.CompletionList {
+func requestCompletion(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos protocol.Position, triggerKind protocol.CompletionTriggerKind, triggerChar string) *protocol.CompletionList {
 	t.Helper()
 	var result protocol.CompletionList
-	err := conn.Call(t.Context(), "textDocument/completion", protocol.CompletionParams{
+	_, err := conn.Call(t.Context(), "textDocument/completion", protocol.CompletionParams{
 		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
 			TextDocument: protocol.TextDocumentIdentifier{URI: uri},
 			Position:     pos,
 		},
 		Context: protocol.CompletionContext{
 			TriggerKind:      triggerKind,
-			TriggerCharacter: triggerChar,
+			TriggerCharacter: &triggerChar,
 		},
 	}, &result)
 	be.Err(t, err, nil)
@@ -85,21 +83,21 @@ func requestCompletion(t *testing.T, conn *jsonrpc2.Conn, uri protocol.DocumentU
 func requestDotCompletion(t *testing.T, celFile string) *protocol.CompletionList {
 	t.Helper()
 	conn, uri, content := setupCompletionServer(t, celFile)
-	return requestCompletion(t, conn, uri, dotPosition(content), protocol.TriggerCharacter, ".")
+	return requestCompletion(t, conn, uri, dotPosition(content), protocol.CompletionTriggerKindTriggerCharacter, ".")
 }
 
 // requestInvokedCompletion sends an invoked completion request at the start of the file.
 func requestInvokedCompletion(t *testing.T, celFile string) *protocol.CompletionList {
 	t.Helper()
 	conn, uri, _ := setupCompletionServer(t, celFile)
-	return requestCompletion(t, conn, uri, protocol.Position{Line: 0, Character: 0}, protocol.Invoked, "")
+	return requestCompletion(t, conn, uri, protocol.Position{Line: 0, Character: 0}, protocol.CompletionTriggerKindInvoked, "")
 }
 
 // requestInvokedAtEnd sends an invoked completion request at the end of the content.
 func requestInvokedAtEnd(t *testing.T, celFile string) *protocol.CompletionList {
 	t.Helper()
 	conn, uri, content := setupCompletionServer(t, celFile)
-	return requestCompletion(t, conn, uri, endOfContent(content), protocol.Invoked, "")
+	return requestCompletion(t, conn, uri, endOfContent(content), protocol.CompletionTriggerKindInvoked, "")
 }
 
 // completionLabels returns the sorted labels from a completion list.
@@ -190,7 +188,7 @@ func TestCompletionDot(t *testing.T) {
 			}
 
 			for _, item := range result.Items {
-				be.Equal(t, item.Kind, protocol.MethodCompletion)
+				be.Equal(t, item.Kind, protocol.CompletionItemKindMethod)
 			}
 		})
 	}
@@ -210,7 +208,7 @@ func TestCompletionDotUnknownReceiver(t *testing.T) {
 func TestCompletionInvokedAtDot(t *testing.T) {
 	t.Parallel()
 	conn, uri, content := setupCompletionServer(t, "testdata/completion/string_receiver.cel")
-	result := requestCompletion(t, conn, uri, dotPosition(content), protocol.Invoked, "")
+	result := requestCompletion(t, conn, uri, dotPosition(content), protocol.CompletionTriggerKindInvoked, "")
 
 	got := completionLabels(result.Items)
 	want := []string{"contains", "endsWith", "matches", "size", "startsWith"}
@@ -234,27 +232,27 @@ func TestCompletionInvoked(t *testing.T) {
 		label string
 		kind  protocol.CompletionItemKind
 	}{
-		{"int", protocol.FunctionCompletion},
-		{"uint", protocol.FunctionCompletion},
-		{"double", protocol.FunctionCompletion},
-		{"string", protocol.FunctionCompletion},
-		{"bool", protocol.FunctionCompletion},
-		{"bytes", protocol.FunctionCompletion},
-		{"duration", protocol.FunctionCompletion},
-		{"timestamp", protocol.FunctionCompletion},
-		{"type", protocol.FunctionCompletion},
-		{"dyn", protocol.FunctionCompletion},
-		{"size", protocol.FunctionCompletion},
-		{"matches", protocol.FunctionCompletion},
-		{"has", protocol.FunctionCompletion},
-		{"all", protocol.FunctionCompletion},
-		{"exists", protocol.FunctionCompletion},
-		{"exists_one", protocol.FunctionCompletion},
-		{"map", protocol.FunctionCompletion},
-		{"filter", protocol.FunctionCompletion},
-		{"true", protocol.KeywordCompletion},
-		{"false", protocol.KeywordCompletion},
-		{"null", protocol.KeywordCompletion},
+		{"int", protocol.CompletionItemKindFunction},
+		{"uint", protocol.CompletionItemKindFunction},
+		{"double", protocol.CompletionItemKindFunction},
+		{"string", protocol.CompletionItemKindFunction},
+		{"bool", protocol.CompletionItemKindFunction},
+		{"bytes", protocol.CompletionItemKindFunction},
+		{"duration", protocol.CompletionItemKindFunction},
+		{"timestamp", protocol.CompletionItemKindFunction},
+		{"type", protocol.CompletionItemKindFunction},
+		{"dyn", protocol.CompletionItemKindFunction},
+		{"size", protocol.CompletionItemKindFunction},
+		{"matches", protocol.CompletionItemKindFunction},
+		{"has", protocol.CompletionItemKindFunction},
+		{"all", protocol.CompletionItemKindFunction},
+		{"exists", protocol.CompletionItemKindFunction},
+		{"exists_one", protocol.CompletionItemKindFunction},
+		{"map", protocol.CompletionItemKindFunction},
+		{"filter", protocol.CompletionItemKindFunction},
+		{"true", protocol.CompletionItemKindKeyword},
+		{"false", protocol.CompletionItemKindKeyword},
+		{"null", protocol.CompletionItemKindKeyword},
 	}
 
 	result := requestInvokedCompletion(t, "testdata/completion/invoked.cel")
@@ -340,7 +338,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			name:           "global function int",
 			file:           "testdata/completion/invoked.cel",
 			label:          "int",
-			wantKind:       protocol.FunctionCompletion,
+			wantKind:       protocol.CompletionItemKindFunction,
 			wantSnippet:    true,
 			wantInsertText: "int($1)",
 			wantDoc:        true,
@@ -350,7 +348,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			file:           "testdata/completion/string_receiver.cel",
 			triggerDot:     true,
 			label:          "contains",
-			wantKind:       protocol.MethodCompletion,
+			wantKind:       protocol.CompletionItemKindMethod,
 			wantSnippet:    true,
 			wantInsertText: "contains($1)",
 			wantDoc:        true,
@@ -360,7 +358,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			file:           "testdata/completion/timestamp_receiver.cel",
 			triggerDot:     true,
 			label:          "getFullYear",
-			wantKind:       protocol.MethodCompletion,
+			wantKind:       protocol.CompletionItemKindMethod,
 			wantSnippet:    true,
 			wantInsertText: "getFullYear($1)",
 			wantDoc:        true,
@@ -369,7 +367,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			name:           "macro exists",
 			file:           "testdata/completion/invoked.cel",
 			label:          "exists",
-			wantKind:       protocol.FunctionCompletion,
+			wantKind:       protocol.CompletionItemKindFunction,
 			wantSnippet:    true,
 			wantInsertText: "exists($1)",
 		},
@@ -377,26 +375,26 @@ func TestCompletionItemProperties(t *testing.T) {
 			name:     "keyword true",
 			file:     "testdata/completion/invoked.cel",
 			label:    "true",
-			wantKind: protocol.KeywordCompletion,
+			wantKind: protocol.CompletionItemKindKeyword,
 		},
 		{
 			name:     "keyword false",
 			file:     "testdata/completion/invoked.cel",
 			label:    "false",
-			wantKind: protocol.KeywordCompletion,
+			wantKind: protocol.CompletionItemKindKeyword,
 		},
 		{
 			name:     "keyword null",
 			file:     "testdata/completion/invoked.cel",
 			label:    "null",
-			wantKind: protocol.KeywordCompletion,
+			wantKind: protocol.CompletionItemKindKeyword,
 		},
 		{
 			name:           "size as member on string",
 			file:           "testdata/completion/string_receiver.cel",
 			triggerDot:     true,
 			label:          "size",
-			wantKind:       protocol.MethodCompletion,
+			wantKind:       protocol.CompletionItemKindMethod,
 			wantSnippet:    true,
 			wantInsertText: "size($1)",
 			wantDoc:        true,
@@ -405,7 +403,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			name:           "size as global",
 			file:           "testdata/completion/invoked.cel",
 			label:          "size",
-			wantKind:       protocol.FunctionCompletion,
+			wantKind:       protocol.CompletionItemKindFunction,
 			wantSnippet:    true,
 			wantInsertText: "size($1)",
 			wantDoc:        true,
@@ -415,7 +413,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			file:           "testdata/completion/string_receiver.cel",
 			triggerDot:     true,
 			label:          "matches",
-			wantKind:       protocol.MethodCompletion,
+			wantKind:       protocol.CompletionItemKindMethod,
 			wantSnippet:    true,
 			wantInsertText: "matches($1)",
 			wantDoc:        true,
@@ -424,7 +422,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			name:           "type conversion duration",
 			file:           "testdata/completion/invoked.cel",
 			label:          "duration",
-			wantKind:       protocol.FunctionCompletion,
+			wantKind:       protocol.CompletionItemKindFunction,
 			wantSnippet:    true,
 			wantInsertText: "duration($1)",
 			wantDoc:        true,
@@ -433,7 +431,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			name:           "type conversion timestamp",
 			file:           "testdata/completion/invoked.cel",
 			label:          "timestamp",
-			wantKind:       protocol.FunctionCompletion,
+			wantKind:       protocol.CompletionItemKindFunction,
 			wantSnippet:    true,
 			wantInsertText: "timestamp($1)",
 			wantDoc:        true,
@@ -455,13 +453,13 @@ func TestCompletionItemProperties(t *testing.T) {
 			be.True(t, item != nil)
 
 			be.Equal(t, item.Kind, tt.wantKind)
-			be.Equal(t, item.InsertText, tt.wantInsertText)
+			insertText, _ := item.InsertText.Get()
+			be.Equal(t, insertText, tt.wantInsertText)
 
 			if tt.wantSnippet {
-				be.True(t, item.InsertTextFormat != nil)
-				be.Equal(t, *item.InsertTextFormat, protocol.SnippetTextFormat)
+				be.Equal(t, item.InsertTextFormat, protocol.InsertTextFormatSnippet)
 			} else {
-				be.True(t, item.InsertTextFormat == nil)
+				be.Equal(t, item.InsertTextFormat, protocol.InsertTextFormat(0))
 			}
 
 			if tt.wantDoc {
@@ -517,28 +515,11 @@ func TestCompletionNoOperators(t *testing.T) {
 
 func TestCompletionCapabilities(t *testing.T) {
 	t.Parallel()
-	ctx := t.Context()
 
-	serverConn, clientConn := net.Pipe()
-	t.Cleanup(func() {
-		_ = serverConn.Close()
-		_ = clientConn.Close()
-	})
-
-	go func() {
-		_ = lsp.ServeStream(ctx, serverConn)
-	}()
-
-	noop := jsonrpc2.HandlerFunc(func(_ context.Context, _ *jsonrpc2.Conn, _ *jsonrpc2.Request) (any, error) {
-		return nil, nil
-	})
-	clientRPC := jsonrpc2.NewConn(ctx, clientConn, noop)
-	t.Cleanup(func() {
-		_ = clientRPC.Close()
-	})
+	clientRPC := newLSPClient(t, protocol.UnimplementedClient{})
 
 	var result protocol.InitializeResult
-	err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &result)
+	_, err := clientRPC.Call(t.Context(), "initialize", protocol.InitializeParams{}, &result)
 	be.Err(t, err, nil)
 
 	be.True(t, result.Capabilities.CompletionProvider != nil)

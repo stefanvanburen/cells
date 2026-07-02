@@ -1,7 +1,7 @@
 package lsp
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"maps"
 	"strings"
@@ -12,16 +12,10 @@ import (
 	"github.com/google/cel-go/common/operators"
 	"github.com/google/cel-go/common/overloads"
 	"github.com/google/cel-go/common/types"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
 )
 
-func (s *server) hover(req *jsonrpc2.Request) (any, error) {
-	var params protocol.HoverParams
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
-
+func (s *server) Hover(_ context.Context, params *protocol.HoverParams) (*protocol.Hover, error) {
 	s.mu.Lock()
 	f := s.files[params.TextDocument.URI]
 	s.mu.Unlock()
@@ -90,11 +84,11 @@ func computeHover(f *file, celEnv *cel.Env, pos protocol.Position) (*protocol.Ho
 	endLine, endCol := byteOffsetToLineCol(f.content, best.byteEnd)
 
 	return &protocol.Hover{
-		Contents: protocol.MarkupContent{
-			Kind:  protocol.Markdown,
+		Contents: &protocol.MarkupContent{
+			Kind:  protocol.MarkupKindMarkdown,
 			Value: best.markdown,
 		},
-		Range: protocol.Range{
+		Range: &protocol.Range{
 			Start: protocol.Position{Line: startLine, Character: startCol},
 			End:   protocol.Position{Line: endLine, Character: endCol},
 		},

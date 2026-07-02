@@ -2,8 +2,6 @@ package lsp_test
 
 import (
 	"context"
-	"encoding/json"
-	"net"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -11,34 +9,47 @@ import (
 	"time"
 
 	"github.com/nalgeon/be"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/jsonrpc2"
+	"go.lsp.dev/protocol"
+	lspuri "go.lsp.dev/uri"
 )
+
+// diagMessage extracts the plain-string form of a Diagnostic's Message
+// (always set as protocol.String by the server).
+func diagMessage(d protocol.Diagnostic) string {
+	s, _ := d.Message.(protocol.String)
+	return string(s)
+}
+
+// diagSource extracts the plain-string form of a Diagnostic's Source.
+func diagSource(d protocol.Diagnostic) string {
+	s, _ := d.Source.Get()
+	return s
+}
 
 // setupDiagServer initializes the LSP server, opens testFilePath, and returns
 // a client connection and the document URI.
-func setupDiagServer(t *testing.T, testFilePath string) (*jsonrpc2.Conn, protocol.DocumentURI) {
+func setupDiagServer(t *testing.T, testFilePath string) (jsonrpc2.Conn, lspuri.URI) {
 	t.Helper()
 	return setupLSPServer(t, testFilePath)
 }
 
 // pullDiagnostics sends a textDocument/diagnostic request and returns the items.
-func pullDiagnostics(t *testing.T, conn *jsonrpc2.Conn, uri protocol.DocumentURI) []protocol.Diagnostic {
+func pullDiagnostics(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI) []protocol.Diagnostic {
 	t.Helper()
 	var result protocol.RelatedFullDocumentDiagnosticReport
-	err := conn.Call(t.Context(), "textDocument/diagnostic", protocol.DocumentDiagnosticParams{
+	_, err := conn.Call(t.Context(), "textDocument/diagnostic", protocol.DocumentDiagnosticParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
 	}, &result)
 	be.Err(t, err, nil)
-	be.Equal(t, result.Kind, string(protocol.DiagnosticFull))
+	be.Equal(t, result.Kind, string(protocol.DocumentDiagnosticReportKindFull))
 	return result.Items
 }
 
 func diagMessages(diags []protocol.Diagnostic) []string {
 	msgs := make([]string, len(diags))
 	for i, d := range diags {
-		msgs[i] = d.Message
+		msgs[i] = diagMessage(d)
 	}
 	return msgs
 }
@@ -54,7 +65,7 @@ func containsSubstring(strs []string, sub string) bool {
 
 // openDiagFile resolves a testdata/diagnostics/ path, opens it, and returns
 // what's needed for pull-diagnostic assertions.
-func openDiagFile(t *testing.T, name string) (*jsonrpc2.Conn, protocol.DocumentURI) {
+func openDiagFile(t *testing.T, name string) (jsonrpc2.Conn, lspuri.URI) {
 	t.Helper()
 	testPath, err := filepath.Abs(filepath.Join("testdata", "diagnostics", name))
 	be.Err(t, err, nil)
@@ -99,8 +110,8 @@ func TestDiagnosticsParseErrors(t *testing.T) {
 
 			be.True(t, len(diags) > 0)
 			for _, d := range diags {
-				be.Equal(t, d.Severity, protocol.SeverityError)
-				be.Equal(t, d.Source, "cells")
+				be.Equal(t, d.Severity, protocol.DiagnosticSeverityError)
+				be.Equal(t, diagSource(d), "cells")
 			}
 			be.True(t, containsSubstring(diagMessages(diags), tt.wantContain))
 		})
@@ -196,8 +207,8 @@ func TestDiagnosticsTypeCheckErrors(t *testing.T) {
 
 			be.True(t, len(diags) > 0)
 			for _, d := range diags {
-				be.Equal(t, d.Severity, protocol.SeverityWarning)
-				be.Equal(t, d.Source, "cells")
+				be.Equal(t, d.Severity, protocol.DiagnosticSeverityWarning)
+				be.Equal(t, diagSource(d), "cells")
 			}
 			if tt.wantCount > 0 {
 				be.Equal(t, len(diags), tt.wantCount)
@@ -313,7 +324,7 @@ func TestDiagnosticsParseErrorPositions(t *testing.T) {
 			first := diags[0]
 			be.Equal(t, first.Range.Start.Line, tt.wantLine)
 			be.Equal(t, first.Range.Start.Character, tt.wantCol)
-			be.Equal(t, first.Severity, protocol.SeverityError)
+			be.Equal(t, first.Severity, protocol.DiagnosticSeverityError)
 		})
 	}
 }
@@ -344,7 +355,7 @@ func TestDiagnosticsTypeCheckPositions(t *testing.T) {
 			first := diags[0]
 			be.Equal(t, first.Range.Start.Line, tt.wantLine)
 			be.Equal(t, first.Range.Start.Character, tt.wantCol)
-			be.Equal(t, first.Severity, protocol.SeverityWarning)
+			be.Equal(t, first.Severity, protocol.DiagnosticSeverityWarning)
 		})
 	}
 }
@@ -403,7 +414,7 @@ func TestDiagnosticsMultipleParseErrors(t *testing.T) {
 
 	be.True(t, len(diags) >= 2)
 	for _, d := range diags {
-		be.Equal(t, d.Severity, protocol.SeverityError)
+		be.Equal(t, d.Severity, protocol.DiagnosticSeverityError)
 	}
 }
 
@@ -425,22 +436,22 @@ func TestDiagnosticsOnChange(t *testing.T) {
 			startFile:  "clean.cel",
 			startSev:   0,
 			changeText: "1 +",
-			changeSev:  protocol.SeverityError,
+			changeSev:  protocol.DiagnosticSeverityError,
 		},
 		{
 			name:       "clean to type error",
 			startFile:  "clean.cel",
 			startSev:   0,
 			changeText: `1 + "hello"`,
-			changeSev:  protocol.SeverityWarning,
+			changeSev:  protocol.DiagnosticSeverityWarning,
 			changeMsg:  "'+'",
 		},
 		{
 			name:       "parse error to type error",
 			startFile:  "unexpected_eof.cel",
-			startSev:   protocol.SeverityError,
+			startSev:   protocol.DiagnosticSeverityError,
 			changeText: `1 + "hello"`,
-			changeSev:  protocol.SeverityWarning,
+			changeSev:  protocol.DiagnosticSeverityWarning,
 		},
 	}
 
@@ -464,7 +475,7 @@ func TestDiagnosticsOnChange(t *testing.T) {
 					Version:                2,
 				},
 				ContentChanges: []protocol.TextDocumentContentChangeEvent{
-					{Value: protocol.TextDocumentContentChangeWholeDocument{Text: tt.changeText}},
+					&protocol.TextDocumentContentChangeWholeDocument{Text: tt.changeText},
 				},
 			})
 			be.Err(t, err, nil)
@@ -476,7 +487,7 @@ func TestDiagnosticsOnChange(t *testing.T) {
 				be.True(t, len(diags) > 0)
 				be.Equal(t, diags[0].Severity, tt.changeSev)
 				if tt.changeMsg != "" {
-					be.True(t, strings.Contains(diags[0].Message, tt.changeMsg))
+					be.True(t, strings.Contains(diagMessage(diags[0]), tt.changeMsg))
 				}
 			}
 		})
@@ -496,6 +507,8 @@ func TestDiagnosticsPullUnknownFile(t *testing.T) {
 
 // diagnosticCollector captures publishDiagnostics notifications from the server.
 type diagnosticCollector struct {
+	protocol.UnimplementedClient
+
 	mu          sync.Mutex
 	diagnostics []protocol.PublishDiagnosticsParams
 	ch          chan struct{}
@@ -505,20 +518,15 @@ func newDiagnosticCollector() *diagnosticCollector {
 	return &diagnosticCollector{ch: make(chan struct{}, 100)}
 }
 
-func (dc *diagnosticCollector) handler(_ context.Context, _ *jsonrpc2.Conn, req *jsonrpc2.Request) (any, error) {
-	if req.Method == "textDocument/publishDiagnostics" && req.Params != nil {
-		var params protocol.PublishDiagnosticsParams
-		if err := json.Unmarshal(*req.Params, &params); err == nil {
-			dc.mu.Lock()
-			dc.diagnostics = append(dc.diagnostics, params)
-			dc.mu.Unlock()
-			select {
-			case dc.ch <- struct{}{}:
-			default:
-			}
-		}
+func (dc *diagnosticCollector) PublishDiagnostics(_ context.Context, params *protocol.PublishDiagnosticsParams) error {
+	dc.mu.Lock()
+	dc.diagnostics = append(dc.diagnostics, *params)
+	dc.mu.Unlock()
+	select {
+	case dc.ch <- struct{}{}:
+	default:
 	}
-	return nil, nil
+	return nil
 }
 
 func (dc *diagnosticCollector) waitForDiagnostics(t *testing.T, n int) {
@@ -550,29 +558,16 @@ func TestDiagnosticsPushOnOpen(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 
-	serverConn, clientConn := net.Pipe()
-	t.Cleanup(func() {
-		_ = serverConn.Close()
-		_ = clientConn.Close()
-	})
-
-	go func() {
-		_ = lsp.ServeStream(ctx, serverConn)
-	}()
-
 	dc := newDiagnosticCollector()
-	clientRPC := jsonrpc2.NewConn(ctx, clientConn, jsonrpc2.HandlerFunc(dc.handler))
-	t.Cleanup(func() {
-		_ = clientRPC.Close()
-	})
+	clientRPC := newLSPClient(t, dc)
 
 	var initResult protocol.InitializeResult
-	err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
+	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
 	be.Err(t, err, nil)
 	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})
 	be.Err(t, err, nil)
 
-	testURI := protocol.DocumentURI("file:///test.cel")
+	testURI := lspuri.URI("file:///test.cel")
 
 	err = clientRPC.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
 		TextDocument: protocol.TextDocumentItem{
@@ -588,36 +583,23 @@ func TestDiagnosticsPushOnOpen(t *testing.T) {
 	params := dc.latest()
 	be.Equal(t, string(params.URI), string(testURI))
 	be.True(t, len(params.Diagnostics) > 0)
-	be.Equal(t, params.Diagnostics[0].Severity, protocol.SeverityError)
+	be.Equal(t, params.Diagnostics[0].Severity, protocol.DiagnosticSeverityError)
 }
 
 func TestDiagnosticsPushOnChange(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 
-	serverConn, clientConn := net.Pipe()
-	t.Cleanup(func() {
-		_ = serverConn.Close()
-		_ = clientConn.Close()
-	})
-
-	go func() {
-		_ = lsp.ServeStream(ctx, serverConn)
-	}()
-
 	dc := newDiagnosticCollector()
-	clientRPC := jsonrpc2.NewConn(ctx, clientConn, jsonrpc2.HandlerFunc(dc.handler))
-	t.Cleanup(func() {
-		_ = clientRPC.Close()
-	})
+	clientRPC := newLSPClient(t, dc)
 
 	var initResult protocol.InitializeResult
-	err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
+	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
 	be.Err(t, err, nil)
 	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})
 	be.Err(t, err, nil)
 
-	testURI := protocol.DocumentURI("file:///test.cel")
+	testURI := lspuri.URI("file:///test.cel")
 
 	// Open with valid content.
 	err = clientRPC.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
@@ -640,7 +622,7 @@ func TestDiagnosticsPushOnChange(t *testing.T) {
 			Version:                2,
 		},
 		ContentChanges: []protocol.TextDocumentContentChangeEvent{
-			{Value: protocol.TextDocumentContentChangeWholeDocument{Text: "1 +"}},
+			&protocol.TextDocumentContentChangeWholeDocument{Text: "1 +"},
 		},
 	})
 	be.Err(t, err, nil)
@@ -648,7 +630,7 @@ func TestDiagnosticsPushOnChange(t *testing.T) {
 	dc.waitForDiagnostics(t, 2)
 	params := dc.latest()
 	be.True(t, len(params.Diagnostics) > 0)
-	be.Equal(t, params.Diagnostics[0].Severity, protocol.SeverityError)
+	be.Equal(t, params.Diagnostics[0].Severity, protocol.DiagnosticSeverityError)
 
 	// Change back to valid.
 	err = clientRPC.Notify(ctx, "textDocument/didChange", protocol.DidChangeTextDocumentParams{
@@ -657,7 +639,7 @@ func TestDiagnosticsPushOnChange(t *testing.T) {
 			Version:                3,
 		},
 		ContentChanges: []protocol.TextDocumentContentChangeEvent{
-			{Value: protocol.TextDocumentContentChangeWholeDocument{Text: "1 + 2"}},
+			&protocol.TextDocumentContentChangeWholeDocument{Text: "1 + 2"},
 		},
 	})
 	be.Err(t, err, nil)
@@ -679,8 +661,8 @@ func TestDiagnosticsComprehensive(t *testing.T) {
 
 	be.True(t, len(diags) > 0)
 	for _, d := range diags {
-		be.Equal(t, d.Severity, protocol.SeverityWarning)
-		be.Equal(t, d.Source, "cells")
+		be.Equal(t, d.Severity, protocol.DiagnosticSeverityWarning)
+		be.Equal(t, diagSource(d), "cells")
 	}
 }
 
@@ -688,28 +670,11 @@ func TestDiagnosticsComprehensive(t *testing.T) {
 
 func TestDiagnosticsCapabilities(t *testing.T) {
 	t.Parallel()
-	ctx := t.Context()
 
-	serverConn, clientConn := net.Pipe()
-	t.Cleanup(func() {
-		_ = serverConn.Close()
-		_ = clientConn.Close()
-	})
-
-	go func() {
-		_ = lsp.ServeStream(ctx, serverConn)
-	}()
-
-	noop := jsonrpc2.HandlerFunc(func(_ context.Context, _ *jsonrpc2.Conn, _ *jsonrpc2.Request) (any, error) {
-		return nil, nil
-	})
-	clientRPC := jsonrpc2.NewConn(ctx, clientConn, noop)
-	t.Cleanup(func() {
-		_ = clientRPC.Close()
-	})
+	clientRPC := newLSPClient(t, protocol.UnimplementedClient{})
 
 	var result protocol.InitializeResult
-	err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &result)
+	_, err := clientRPC.Call(t.Context(), "initialize", protocol.InitializeParams{}, &result)
 	be.Err(t, err, nil)
 
 	// Push diagnostics only — DiagnosticProvider is not advertised to avoid

@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/nalgeon/be"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
 )
 
 // getHover sends a textDocument/hover request and returns the result.
@@ -16,7 +16,7 @@ func getHover(t *testing.T, celFile string, line, character uint32) *protocol.Ho
 	clientConn, testURI := setupLSPServer(t, testPath)
 
 	var result *protocol.Hover
-	err := clientConn.Call(ctx, "textDocument/hover", protocol.HoverParams{
+	_, err := clientConn.Call(ctx, "textDocument/hover", protocol.HoverParams{
 		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
 			TextDocument: protocol.TextDocumentIdentifier{
 				URI: testURI,
@@ -36,8 +36,10 @@ func requireHoverContains(t *testing.T, celFile string, line, character uint32, 
 	t.Helper()
 	result := getHover(t, celFile, line, character)
 	be.True(t, result != nil)
-	be.Equal(t, result.Contents.Kind, protocol.Markdown)
-	be.True(t, strings.Contains(result.Contents.Value, substr))
+	markup, ok := result.Contents.(*protocol.MarkupContent)
+	be.True(t, ok)
+	be.Equal(t, markup.Kind, protocol.MarkupKindMarkdown)
+	be.True(t, strings.Contains(markup.Value, substr))
 }
 
 // requireNoHover asserts that hover at (line, char) returns nil.

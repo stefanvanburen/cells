@@ -1,22 +1,20 @@
 package lsp_test
 
 import (
-	"context"
-	"net"
 	"strings"
 	"testing"
 
 	"github.com/nalgeon/be"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/jsonrpc2"
+	"go.lsp.dev/protocol"
+	lspuri "go.lsp.dev/uri"
 )
 
 // requestSignatureHelp sends a textDocument/signatureHelp request at the given position.
-func requestSignatureHelp(t *testing.T, conn *jsonrpc2.Conn, uri protocol.DocumentURI, pos protocol.Position) *protocol.SignatureHelp {
+func requestSignatureHelp(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos protocol.Position) *protocol.SignatureHelp {
 	t.Helper()
 	var result *protocol.SignatureHelp
-	err := conn.Call(t.Context(), "textDocument/signatureHelp", protocol.SignatureHelpParams{
+	_, err := conn.Call(t.Context(), "textDocument/signatureHelp", protocol.SignatureHelpParams{
 		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
 			TextDocument: protocol.TextDocumentIdentifier{URI: uri},
 			Position:     pos,
@@ -129,7 +127,8 @@ func TestSignatureHelp(t *testing.T) {
 			}
 
 			if tc.wantActiveParam != nil {
-				be.Equal(t, sig.ActiveParameter, *tc.wantActiveParam)
+				got, _ := sig.ActiveParameter.Get()
+				be.Equal(t, got, *tc.wantActiveParam)
 			}
 		})
 	}
@@ -139,28 +138,11 @@ func TestSignatureHelp(t *testing.T) {
 
 func TestSignatureHelpCapabilities(t *testing.T) {
 	t.Parallel()
-	ctx := t.Context()
 
-	serverConn, clientConn := net.Pipe()
-	t.Cleanup(func() {
-		_ = serverConn.Close()
-		_ = clientConn.Close()
-	})
-
-	go func() {
-		_ = lsp.ServeStream(ctx, serverConn)
-	}()
-
-	noop := jsonrpc2.HandlerFunc(func(_ context.Context, _ *jsonrpc2.Conn, _ *jsonrpc2.Request) (any, error) {
-		return nil, nil
-	})
-	clientRPC := jsonrpc2.NewConn(ctx, clientConn, noop)
-	t.Cleanup(func() {
-		_ = clientRPC.Close()
-	})
+	clientRPC := newLSPClient(t, protocol.UnimplementedClient{})
 
 	var result protocol.InitializeResult
-	err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &result)
+	_, err := clientRPC.Call(t.Context(), "initialize", protocol.InitializeParams{}, &result)
 	be.Err(t, err, nil)
 
 	be.True(t, result.Capabilities.SignatureHelpProvider != nil)

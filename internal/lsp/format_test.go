@@ -1,17 +1,13 @@
 package lsp_test
 
 import (
-	"context"
-	"net"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/nalgeon/be"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
 )
 
 func TestFormat(t *testing.T) {
@@ -71,28 +67,11 @@ func TestFormatParseError(t *testing.T) {
 
 func TestFormatCapabilities(t *testing.T) {
 	t.Parallel()
-	ctx := t.Context()
 
-	serverConn, clientConn := net.Pipe()
-	t.Cleanup(func() {
-		_ = serverConn.Close()
-		_ = clientConn.Close()
-	})
-
-	go func() {
-		_ = lsp.ServeStream(ctx, serverConn)
-	}()
-
-	noop := jsonrpc2.HandlerFunc(func(_ context.Context, _ *jsonrpc2.Conn, _ *jsonrpc2.Request) (any, error) {
-		return nil, nil
-	})
-	clientRPC := jsonrpc2.NewConn(ctx, clientConn, noop)
-	t.Cleanup(func() {
-		_ = clientRPC.Close()
-	})
+	clientRPC := newLSPClient(t, protocol.UnimplementedClient{})
 
 	var result protocol.InitializeResult
-	err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &result)
+	_, err := clientRPC.Call(t.Context(), "initialize", protocol.InitializeParams{}, &result)
 	be.Err(t, err, nil)
 
 	be.True(t, result.Capabilities.DocumentFormattingProvider != nil)
@@ -107,7 +86,7 @@ func requestFormatting(t *testing.T, celFile string) []protocol.TextEdit {
 	clientConn, testURI := setupLSPServer(t, testPath)
 
 	var edits []protocol.TextEdit
-	err := clientConn.Call(ctx, "textDocument/formatting", protocol.DocumentFormattingParams{
+	_, err := clientConn.Call(ctx, "textDocument/formatting", protocol.DocumentFormattingParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: testURI},
 		Options: protocol.FormattingOptions{
 			TabSize:      2,

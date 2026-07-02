@@ -4,7 +4,7 @@ import (
 	"slices"
 
 	"github.com/google/cel-go/cel"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
 )
 
 func newCELEnv() (*cel.Env, error) {
@@ -41,16 +41,17 @@ func Check(content string) ([]CheckDiagnostic, error) {
 	result := make([]CheckDiagnostic, 0, len(diags))
 	for _, d := range diags {
 		sev := "error"
-		if d.Severity == protocol.SeverityWarning {
+		if d.Severity == protocol.DiagnosticSeverityWarning {
 			sev = "warning"
 		}
+		message, _ := d.Message.(protocol.String)
 		result = append(result, CheckDiagnostic{
 			Line:     int(d.Range.Start.Line) + 1,
 			Col:      int(d.Range.Start.Character) + 1,
 			EndLine:  int(d.Range.End.Line) + 1,
 			EndCol:   int(d.Range.End.Character) + 1,
 			Severity: sev,
-			Message:  d.Message,
+			Message:  string(message),
 		})
 	}
 	return result, nil
@@ -71,7 +72,11 @@ func Hover(content string, line, col int) (string, error) {
 	if err != nil || result == nil {
 		return "", err
 	}
-	return result.Contents.Value, nil
+	markup, _ := result.Contents.(*protocol.MarkupContent)
+	if markup == nil {
+		return "", nil
+	}
+	return markup.Value, nil
 }
 
 // Reference is a source location (1-indexed, UTF-8 byte columns).
@@ -122,10 +127,12 @@ func Rename(content string, line, col int, newName string) (string, error) {
 	}
 	f := &file{uri: "file:///cli", content: content}
 	edit, err := computeRename(f, env, protocol.RenameParams{
-		TextDocument: protocol.TextDocumentIdentifier{URI: f.uri},
-		Position: protocol.Position{
-			Line:      uint32(line - 1),
-			Character: uint32(col - 1),
+		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: f.uri},
+			Position: protocol.Position{
+				Line:      uint32(line - 1),
+				Character: uint32(col - 1),
+			},
 		},
 		NewName: newName,
 	})

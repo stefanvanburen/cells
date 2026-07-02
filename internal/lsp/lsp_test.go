@@ -1,21 +1,26 @@
 package lsp_test
 
 import (
-	"context"
 	"net"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"github.com/nalgeon/be"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
 	"github.com/stefanvanburen/cells/internal/lsp"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/jsonrpc2"
+	"go.lsp.dev/protocol"
+	"go.lsp.dev/uri"
 )
 
-// setupLSPServer creates and initializes an LSP server for testing.
-// Returns the client JSON-RPC connection and the test file URI.
-func setupLSPServer(t *testing.T, testFilePath string) (*jsonrpc2.Conn, protocol.DocumentURI) {
+// newLSPClient starts a fresh LSP server on one end of an in-memory pipe and
+// returns a client connection to it, wired with the union-aware LSP codec
+// (required for Optional/Nullable/union fields to round-trip correctly).
+// It does not perform the initialize handshake, so callers that only need to
+// inspect InitializeResult (or that supply their own protocol.Client, e.g. to
+// capture pushed notifications) can do so without setupLSPServer's extra
+// didOpen step.
+func newLSPClient(t *testing.T, client protocol.Client) jsonrpc2.Conn {
 	t.Helper()
 	ctx := t.Context()
 
@@ -31,19 +36,25 @@ func setupLSPServer(t *testing.T, testFilePath string) (*jsonrpc2.Conn, protocol
 		_ = lsp.ServeStream(ctx, serverConn)
 	}()
 
-	// Create a client connection on the client side.
-	noop := jsonrpc2.HandlerFunc(func(_ context.Context, _ *jsonrpc2.Conn, _ *jsonrpc2.Request) (any, error) {
-		return nil, nil
-	})
-	clientRPC := jsonrpc2.NewConn(ctx, clientConn, noop)
+	_, clientRPC, _ := protocol.NewClient(ctx, client, jsonrpc2.NewStream(clientConn))
 	t.Cleanup(func() {
 		_ = clientRPC.Close()
 	})
+	return clientRPC
+}
 
-	testURI := protocol.URIFromPath(testFilePath)
+// setupLSPServer creates and initializes an LSP server for testing.
+// Returns the client JSON-RPC connection and the test file URI.
+func setupLSPServer(t *testing.T, testFilePath string) (jsonrpc2.Conn, uri.URI) {
+	t.Helper()
+	ctx := t.Context()
+
+	clientRPC := newLSPClient(t, protocol.UnimplementedClient{})
+
+	testURI := uri.File(testFilePath)
 
 	var initResult protocol.InitializeResult
-	err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
+	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
 	be.Err(t, err, nil)
 
 	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})

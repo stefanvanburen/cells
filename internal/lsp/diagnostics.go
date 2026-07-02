@@ -2,33 +2,31 @@ package lsp
 
 import (
 	"context"
-	"encoding/json"
 	"regexp"
 	"strings"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/operators"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
+	"go.lsp.dev/uri"
 )
 
 // publishDiagnostics computes and pushes diagnostics for the given file.
-func publishDiagnostics(conn *jsonrpc2.Conn, uri protocol.DocumentURI, version int32, content string, celEnv *cel.Env) {
+func publishDiagnostics(ctx context.Context, docURI uri.URI, version int32, content string, celEnv *cel.Env) {
+	client, ok := protocol.ClientFromContext(ctx)
+	if !ok {
+		return
+	}
 	diagnostics := computeDiagnostics(content, celEnv)
-	_ = conn.Notify(context.Background(), "textDocument/publishDiagnostics", protocol.PublishDiagnosticsParams{
-		URI:         uri,
-		Version:     version,
+	_ = client.PublishDiagnostics(ctx, &protocol.PublishDiagnosticsParams{
+		URI:         docURI,
+		Version:     protocol.NewOptional(version),
 		Diagnostics: diagnostics,
 	})
 }
 
-// diagnosticFull handles the pull diagnostic request (textDocument/diagnostic).
-func (s *server) diagnosticFull(req *jsonrpc2.Request) (any, error) {
-	var params protocol.DocumentDiagnosticParams
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
-
+// Diagnostic handles the pull diagnostic request (textDocument/diagnostic).
+func (s *server) Diagnostic(_ context.Context, params *protocol.DocumentDiagnosticParams) (protocol.DocumentDiagnosticReport, error) {
 	s.mu.Lock()
 	f := s.files[params.TextDocument.URI]
 	var content string
@@ -38,17 +36,17 @@ func (s *server) diagnosticFull(req *jsonrpc2.Request) (any, error) {
 	s.mu.Unlock()
 
 	if f == nil {
-		return protocol.RelatedFullDocumentDiagnosticReport{
+		return &protocol.RelatedFullDocumentDiagnosticReport{
 			FullDocumentDiagnosticReport: protocol.FullDocumentDiagnosticReport{
-				Kind:  string(protocol.DiagnosticFull),
+				Kind:  string(protocol.DocumentDiagnosticReportKindFull),
 				Items: []protocol.Diagnostic{},
 			},
 		}, nil
 	}
 
-	return protocol.RelatedFullDocumentDiagnosticReport{
+	return &protocol.RelatedFullDocumentDiagnosticReport{
 		FullDocumentDiagnosticReport: protocol.FullDocumentDiagnosticReport{
-			Kind:  string(protocol.DiagnosticFull),
+			Kind:  string(protocol.DocumentDiagnosticReportKindFull),
 			Items: computeDiagnostics(content, s.celEnv),
 		},
 	}, nil
@@ -63,13 +61,13 @@ func computeDiagnostics(content string, celEnv *cel.Env) []protocol.Diagnostic {
 	// Parse phase.
 	parsed, parseIssues := celEnv.Parse(content)
 	if parseIssues.Err() != nil {
-		return issuesToDiagnostics(content, parseIssues, protocol.SeverityError)
+		return issuesToDiagnostics(content, parseIssues, protocol.DiagnosticSeverityError)
 	}
 
 	// Check (type-check) phase.
 	_, checkIssues := celEnv.Check(parsed)
 	if checkIssues.Err() != nil {
-		return issuesToDiagnostics(content, checkIssues, protocol.SeverityWarning)
+		return issuesToDiagnostics(content, checkIssues, protocol.DiagnosticSeverityWarning)
 	}
 
 	// No errors — clear diagnostics.
@@ -101,8 +99,8 @@ func issuesToDiagnostics(content string, issues *cel.Issues, severity protocol.D
 				End:   endPos,
 			},
 			Severity: severity,
-			Source:   serverName,
-			Message:  cleanMessage(e.Message),
+			Source:   protocol.NewOptional(serverName),
+			Message:  protocol.String(cleanMessage(e.Message)),
 		})
 	}
 	return diagnostics

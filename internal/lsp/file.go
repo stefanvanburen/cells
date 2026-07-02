@@ -1,10 +1,10 @@
 package lsp
 
-import "github.com/stefanvanburen/cells/internal/lsp/protocol"
+import "go.lsp.dev/uri"
 
 // file tracks a single open document.
 type file struct {
-	uri     protocol.DocumentURI
+	uri     uri.URI
 	version int32
 	content string
 }

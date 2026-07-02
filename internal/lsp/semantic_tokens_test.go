@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/nalgeon/be"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
 )
 
 // semanticToken represents a decoded semantic token for easier testing.
@@ -90,7 +90,7 @@ func getSemanticTokens(t *testing.T, celFile string) []semanticToken {
 	clientConn, testURI := setupLSPServer(t, testPath)
 
 	var result *protocol.SemanticTokens
-	err := clientConn.Call(ctx, "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
+	_, err := clientConn.Call(ctx, "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
 		TextDocument: protocol.TextDocumentIdentifier{
 			URI: testURI,
 		},
@@ -108,7 +108,7 @@ func getNilSemanticTokens(t *testing.T, celFile string) {
 	clientConn, testURI := setupLSPServer(t, testPath)
 
 	var result *protocol.SemanticTokens
-	err := clientConn.Call(ctx, "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
+	_, err := clientConn.Call(ctx, "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
 		TextDocument: protocol.TextDocumentIdentifier{
 			URI: testURI,
 		},

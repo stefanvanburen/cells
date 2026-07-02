@@ -1,15 +1,15 @@
 package lsp
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
 	"strings"
 	"unicode"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/ast"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
+	lspuri "go.lsp.dev/uri"
 )
 
 // identifierKind represents the type of identifier being renamed.
@@ -39,12 +39,7 @@ type loopVarScope struct {
 
 func (loopVarScope) isScope() {}
 
-func (s *server) rename(req *jsonrpc2.Request) (any, error) {
-	var params protocol.RenameParams
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
-
+func (s *server) Rename(_ context.Context, params *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
 	s.mu.Lock()
 	f := s.files[params.TextDocument.URI]
 	s.mu.Unlock()
@@ -53,18 +48,10 @@ func (s *server) rename(req *jsonrpc2.Request) (any, error) {
 		return nil, nil
 	}
 
-	return computeRename(f, s.celEnv, params)
+	return computeRename(f, s.celEnv, *params)
 }
 
-func (s *server) prepareRename(req *jsonrpc2.Request) (any, error) {
-	var params struct {
-		TextDocument protocol.TextDocumentIdentifier `json:"textDocument"`
-		Position     protocol.Position               `json:"position"`
-	}
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
-
+func (s *server) PrepareRename(_ context.Context, params *protocol.PrepareRenameParams) (protocol.PrepareRenameResult, error) {
 	s.mu.Lock()
 	f := s.files[params.TextDocument.URI]
 	s.mu.Unlock()
@@ -136,13 +123,13 @@ func computeRename(f *file, celEnv *cel.Env, params protocol.RenameParams) (*pro
 	// Build WorkspaceEdit
 	uri := params.TextDocument.URI
 	return &protocol.WorkspaceEdit{
-		Changes: map[protocol.DocumentURI][]protocol.TextEdit{
+		Changes: map[lspuri.URI][]protocol.TextEdit{
 			uri: textEdits,
 		},
 	}, nil
 }
 
-func computePrepareRename(f *file, celEnv *cel.Env, pos protocol.Position) (any, error) {
+func computePrepareRename(f *file, celEnv *cel.Env, pos protocol.Position) (protocol.PrepareRenameResult, error) {
 	parsed, issues := celEnv.Parse(f.content)
 	if issues.Err() != nil {
 		return nil, nil

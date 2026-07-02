@@ -1,21 +1,15 @@
 package lsp
 
 import (
-	"encoding/json"
+	"context"
 	"strings"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/ast"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
 )
 
-func (s *server) documentHighlight(req *jsonrpc2.Request) (any, error) {
-	var params protocol.DocumentHighlightParams
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
-
+func (s *server) DocumentHighlight(_ context.Context, params *protocol.DocumentHighlightParams) ([]protocol.DocumentHighlight, error) {
 	s.mu.Lock()
 	f := s.files[params.TextDocument.URI]
 	s.mu.Unlock()
@@ -24,7 +18,7 @@ func (s *server) documentHighlight(req *jsonrpc2.Request) (any, error) {
 		return nil, nil
 	}
 
-	return computeDocumentHighlight(f, s.celEnv, params)
+	return computeDocumentHighlight(f, s.celEnv, *params)
 }
 
 func computeDocumentHighlight(f *file, celEnv *cel.Env, params protocol.DocumentHighlightParams) ([]protocol.DocumentHighlight, error) {

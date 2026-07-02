@@ -1,20 +1,15 @@
 package lsp
 
 import (
-	"encoding/json"
+	"context"
 
 	"github.com/google/cel-go/cel"
 	"github.com/google/cel-go/common/ast"
-	"github.com/stefanvanburen/cells/internal/jsonrpc2"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
+	lspuri "go.lsp.dev/uri"
 )
 
-func (s *server) references(req *jsonrpc2.Request) (any, error) {
-	var params protocol.ReferenceParams
-	if err := json.Unmarshal(*req.Params, &params); err != nil {
-		return nil, err
-	}
-
+func (s *server) References(_ context.Context, params *protocol.ReferenceParams) ([]protocol.Location, error) {
 	s.mu.Lock()
 	f := s.files[params.TextDocument.URI]
 	s.mu.Unlock()
@@ -23,7 +18,7 @@ func (s *server) references(req *jsonrpc2.Request) (any, error) {
 		return nil, nil
 	}
 
-	return computeReferences(f, s.celEnv, params)
+	return computeReferences(f, s.celEnv, *params)
 }
 
 func computeReferences(f *file, celEnv *cel.Env, params protocol.ReferenceParams) ([]protocol.Location, error) {
@@ -80,7 +75,7 @@ func computeReferences(f *file, celEnv *cel.Env, params protocol.ReferenceParams
 }
 
 // findAllReferences collects all locations of the identifier within its scope.
-func findAllReferences(expr ast.Expr, sourceInfo *ast.SourceInfo, fileContent string, s scope, identName string, uri protocol.DocumentURI) []protocol.Location {
+func findAllReferences(expr ast.Expr, sourceInfo *ast.SourceInfo, fileContent string, s scope, identName string, uri lspuri.URI) []protocol.Location {
 	var locations []protocol.Location
 
 	switch sc := s.(type) {
@@ -107,7 +102,7 @@ func findAllReferences(expr ast.Expr, sourceInfo *ast.SourceInfo, fileContent st
 }
 
 // collectReferencesInComprehension collects all occurrences of identName in a comprehension's expressions.
-func collectReferencesInComprehension(comp ast.CallExpr, sourceInfo *ast.SourceInfo, fileContent string, identName string, uri protocol.DocumentURI, locations *[]protocol.Location) {
+func collectReferencesInComprehension(comp ast.CallExpr, sourceInfo *ast.SourceInfo, fileContent string, identName string, uri lspuri.URI, locations *[]protocol.Location) {
 	if comp == nil || len(comp.Args()) < 2 {
 		return
 	}
@@ -140,7 +135,7 @@ func collectReferencesInComprehension(comp ast.CallExpr, sourceInfo *ast.SourceI
 }
 
 // collectReferencesInComprehensionExpr collects references for an identifier within a ComprehensionKind expression.
-func collectReferencesInComprehensionExpr(compExpr ast.Expr, sourceInfo *ast.SourceInfo, fileContent string, identName string, uri protocol.DocumentURI, locations *[]protocol.Location) {
+func collectReferencesInComprehensionExpr(compExpr ast.Expr, sourceInfo *ast.SourceInfo, fileContent string, identName string, uri lspuri.URI, locations *[]protocol.Location) {
 	if compExpr == nil || compExpr.Kind() != ast.ComprehensionKind {
 		return
 	}

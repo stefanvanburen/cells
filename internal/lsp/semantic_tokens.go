@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"context"
 	"maps"
 	"slices"
 	"unicode/utf16"
@@ -9,8 +10,19 @@ import (
 	"github.com/google/cel-go/common/ast"
 	"github.com/google/cel-go/common/overloads"
 	"github.com/google/cel-go/common/types"
-	"github.com/stefanvanburen/cells/internal/lsp/protocol"
+	"go.lsp.dev/protocol"
 )
+
+func (s *server) SemanticTokensFull(_ context.Context, params *protocol.SemanticTokensParams) (*protocol.SemanticTokens, error) {
+	s.mu.Lock()
+	f := s.files[params.TextDocument.URI]
+	s.mu.Unlock()
+
+	if f == nil {
+		return nil, nil
+	}
+	return computeSemanticTokens(f, s.celEnv)
+}
 
 // Semantic token types - indices into semanticTypeLegend.
 const (
@@ -42,28 +54,28 @@ const (
 
 var (
 	semanticTypeLegend = []string{
-		string(protocol.PropertyType),
-		string(protocol.StructType),
-		string(protocol.VariableType),
-		string(protocol.EnumType),
-		string(protocol.EnumMemberType),
-		string(protocol.InterfaceType),
-		string(protocol.MethodType),
-		string(protocol.FunctionType),
-		string(protocol.DecoratorType),
-		string(protocol.MacroType),
-		string(protocol.NamespaceType),
-		string(protocol.KeywordType),
-		string(protocol.ModifierType),
-		string(protocol.CommentType),
-		string(protocol.StringType),
-		string(protocol.NumberType),
-		string(protocol.TypeType),
-		string(protocol.OperatorType),
+		string(protocol.SemanticTokenTypesProperty),
+		string(protocol.SemanticTokenTypesStruct),
+		string(protocol.SemanticTokenTypesVariable),
+		string(protocol.SemanticTokenTypesEnum),
+		string(protocol.SemanticTokenTypesEnumMember),
+		string(protocol.SemanticTokenTypesInterface),
+		string(protocol.SemanticTokenTypesMethod),
+		string(protocol.SemanticTokenTypesFunction),
+		string(protocol.SemanticTokenTypesDecorator),
+		string(protocol.SemanticTokenTypesMacro),
+		string(protocol.SemanticTokenTypesNamespace),
+		string(protocol.SemanticTokenTypesKeyword),
+		string(protocol.SemanticTokenTypesModifier),
+		string(protocol.SemanticTokenTypesComment),
+		string(protocol.SemanticTokenTypesString),
+		string(protocol.SemanticTokenTypesNumber),
+		string(protocol.SemanticTokenTypesType),
+		string(protocol.SemanticTokenTypesOperator),
 	}
 	semanticModifierLegend = []string{
-		string(protocol.ModDeprecated),
-		string(protocol.ModDefaultLibrary),
+		string(protocol.SemanticTokenModifiersDeprecated),
+		string(protocol.SemanticTokenModifiersDefaultLibrary),
 	}
 )
 
