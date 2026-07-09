@@ -4,10 +4,6 @@ on:
     branches:
       - main
   pull_request: {}
-  workflow_dispatch: {}
-  schedule:
-    # Run at 10am daily.
-    - cron: "0 10 * * *"
 
 permissions: {}
 
