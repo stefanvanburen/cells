@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"github.com/pressly/cli"
-	"github.com/stefanvanburen/cells/internal/lsp"
+	"go.vanburen.xyz/cells/internal/lsp"
 	"znkr.io/diff/textdiff"
 )
 

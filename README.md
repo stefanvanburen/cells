@@ -6,7 +6,7 @@ It operates on individual `.cel` files, providing various LSP features.
 ## Installation
 
 ```console
-$ go install github.com/stefanvanburen/cells/cmd/cells@latest
+$ go install go.vanburen.xyz/cells/cmd/cells@latest
 ```
 
 ## Features

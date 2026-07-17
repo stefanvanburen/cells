@@ -1,4 +1,4 @@
-module github.com/stefanvanburen/cells
+module go.vanburen.xyz/cells
 
 go 1.26.0
 
