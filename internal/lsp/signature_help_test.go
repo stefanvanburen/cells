@@ -15,10 +15,8 @@ func requestSignatureHelp(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos 
 	t.Helper()
 	var result *protocol.SignatureHelp
 	_, err := conn.Call(t.Context(), "textDocument/signatureHelp", protocol.SignatureHelpParams{
-		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
-			TextDocument: protocol.TextDocumentIdentifier{URI: uri},
-			Position:     pos,
-		},
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+		Position:     pos,
 	}, &result)
 	be.Err(t, err, nil)
 	return result

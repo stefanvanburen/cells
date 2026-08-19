@@ -66,10 +66,8 @@ func requestCompletion(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos pro
 	t.Helper()
 	var result protocol.CompletionList
 	_, err := conn.Call(t.Context(), "textDocument/completion", protocol.CompletionParams{
-		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
-			TextDocument: protocol.TextDocumentIdentifier{URI: uri},
-			Position:     pos,
-		},
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+		Position:     pos,
 		Context: protocol.CompletionContext{
 			TriggerKind:      triggerKind,
 			TriggerCharacter: &triggerChar,

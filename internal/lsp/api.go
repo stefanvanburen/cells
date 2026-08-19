@@ -95,12 +95,10 @@ func References(content string, line, col int) ([]Reference, error) {
 	}
 	f := &file{uri: "file:///cli", content: content}
 	locs, err := computeReferences(f, env, protocol.ReferenceParams{
-		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
-			TextDocument: protocol.TextDocumentIdentifier{URI: f.uri},
-			Position: protocol.Position{
-				Line:      uint32(line - 1),
-				Character: uint32(col - 1),
-			},
+		TextDocument: protocol.TextDocumentIdentifier{URI: f.uri},
+		Position: protocol.Position{
+			Line:      uint32(line - 1),
+			Character: uint32(col - 1),
 		},
 	})
 	if err != nil {
@@ -127,12 +125,10 @@ func Rename(content string, line, col int, newName string) (string, error) {
 	}
 	f := &file{uri: "file:///cli", content: content}
 	edit, err := computeRename(f, env, protocol.RenameParams{
-		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
-			TextDocument: protocol.TextDocumentIdentifier{URI: f.uri},
-			Position: protocol.Position{
-				Line:      uint32(line - 1),
-				Character: uint32(col - 1),
-			},
+		TextDocument: protocol.TextDocumentIdentifier{URI: f.uri},
+		Position: protocol.Position{
+			Line:      uint32(line - 1),
+			Character: uint32(col - 1),
 		},
 		NewName: newName,
 	})

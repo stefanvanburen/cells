@@ -37,18 +37,14 @@ func (s *server) Diagnostic(_ context.Context, params *protocol.DocumentDiagnost
 
 	if f == nil {
 		return &protocol.RelatedFullDocumentDiagnosticReport{
-			FullDocumentDiagnosticReport: protocol.FullDocumentDiagnosticReport{
-				Kind:  string(protocol.DocumentDiagnosticReportKindFull),
-				Items: []protocol.Diagnostic{},
-			},
+			Kind:  string(protocol.DocumentDiagnosticReportKindFull),
+			Items: []protocol.Diagnostic{},
 		}, nil
 	}
 
 	return &protocol.RelatedFullDocumentDiagnosticReport{
-		FullDocumentDiagnosticReport: protocol.FullDocumentDiagnosticReport{
-			Kind:  string(protocol.DocumentDiagnosticReportKindFull),
-			Items: computeDiagnostics(content, s.celEnv),
-		},
+		Kind:  string(protocol.DocumentDiagnosticReportKindFull),
+		Items: computeDiagnostics(content, s.celEnv),
 	}, nil
 }
 

@@ -17,14 +17,12 @@ func getHover(t *testing.T, celFile string, line, character uint32) *protocol.Ho
 
 	var result *protocol.Hover
 	_, err := clientConn.Call(ctx, "textDocument/hover", protocol.HoverParams{
-		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
-			TextDocument: protocol.TextDocumentIdentifier{
-				URI: testURI,
-			},
-			Position: protocol.Position{
-				Line:      line,
-				Character: character,
-			},
+		TextDocument: protocol.TextDocumentIdentifier{
+			URI: testURI,
+		},
+		Position: protocol.Position{
+			Line:      line,
+			Character: character,
 		},
 	}, &result)
 	be.Err(t, err, nil)
@@ -207,7 +205,7 @@ func TestHover(t *testing.T) {
 		{name: "link_type_conv_string", file: "testdata/hover/type_conversions.cel", line: 0, char: 0, contains: "celbyexample.com/type-conversions/#string-conversions", desc: "'string' links to celbyexample.com"},
 		{name: "link_type_conv_double", file: "testdata/hover/type_conversions.cel", line: 0, char: 13, contains: "celbyexample.com/type-conversions/#numeric-conversions", desc: "'double' links to celbyexample.com"},
 		{name: "link_arithmetic_subtract", file: "testdata/hover/comprehensive.cel", line: 7, char: 12, contains: "celbyexample.com/arithmetic/", desc: "'-' links to celbyexample.com"},
-{name: "link_type_conv_uint", file: "testdata/hover/comprehensive.cel", line: 19, char: 0, contains: "celbyexample.com/type-conversions/#numeric-conversions", desc: "'uint' links to celbyexample.com"},
+		{name: "link_type_conv_uint", file: "testdata/hover/comprehensive.cel", line: 19, char: 0, contains: "celbyexample.com/type-conversions/#numeric-conversions", desc: "'uint' links to celbyexample.com"},
 		{name: "link_type_conv_bytes", file: "testdata/hover/comprehensive.cel", line: 21, char: 0, contains: "celbyexample.com/type-conversions/#bytes-conversions", desc: "'bytes' links to celbyexample.com"},
 		{name: "link_type_conv_duration", file: "testdata/hover/comprehensive.cel", line: 102, char: 0, contains: "celbyexample.com/type-conversions/#time-conversions", desc: "'duration' links to celbyexample.com"},
 		{name: "link_type_conv_timestamp", file: "testdata/hover/comprehensive.cel", line: 103, char: 0, contains: "celbyexample.com/type-conversions/#time-conversions", desc: "'timestamp' links to celbyexample.com"},

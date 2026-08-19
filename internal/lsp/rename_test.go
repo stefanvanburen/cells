@@ -14,11 +14,9 @@ func requestRename(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos protoco
 	t.Helper()
 	var result *protocol.WorkspaceEdit
 	_, err := conn.Call(t.Context(), "textDocument/rename", protocol.RenameParams{
-		TextDocumentPositionParams: protocol.TextDocumentPositionParams{
-			TextDocument: protocol.TextDocumentIdentifier{URI: uri},
-			Position:     pos,
-		},
-		NewName: newName,
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+		Position:     pos,
+		NewName:      newName,
 	}, &result)
 	be.Err(t, err, nil)
 	return result
