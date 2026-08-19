@@ -270,19 +270,14 @@ func renameCommand() *cli.Command {
 // parsePosition parses an argument of the form "file:line:col" where line and col are 1-indexed.
 // Columns are measured in UTF-8 bytes.
 func parsePosition(arg string) (filename string, line, col int, err error) {
-	lastColon := strings.LastIndex(arg, ":")
-	if lastColon < 0 {
+	rest, colStr, ok := strings.CutLast(arg, ":")
+	if !ok {
 		return "", 0, 0, fmt.Errorf("invalid position %q: expected file:line:col", arg)
 	}
-	colStr := arg[lastColon+1:]
-	rest := arg[:lastColon]
-
-	secondColon := strings.LastIndex(rest, ":")
-	if secondColon < 0 {
+	filename, lineStr, ok := strings.CutLast(rest, ":")
+	if !ok {
 		return "", 0, 0, fmt.Errorf("invalid position %q: expected file:line:col", arg)
 	}
-	lineStr := rest[secondColon+1:]
-	filename = rest[:secondColon]
 
 	line, err = strconv.Atoi(lineStr)
 	if err != nil {
