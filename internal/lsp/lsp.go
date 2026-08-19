@@ -140,15 +140,12 @@ func newServer() (*server, error) {
 	}, nil
 }
 
-//go:fix inline
-func ptrTo[T any](v T) *T { return new(v) }
-
 func (s *server) Initialize(context.Context, *protocol.InitializeParams) (*protocol.InitializeResult, error) {
 	return &protocol.InitializeResult{
 		Capabilities: protocol.ServerCapabilities{
 			TextDocumentSync: &protocol.TextDocumentSyncOptions{
 				OpenClose: new(true),
-				Change:    ptrTo(protocol.TextDocumentSyncKindFull),
+				Change:    new(protocol.TextDocumentSyncKindFull),
 			},
 			HoverProvider:              protocol.Boolean(true),
 			DocumentFormattingProvider: protocol.Boolean(true),
