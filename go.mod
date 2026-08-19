@@ -1,6 +1,6 @@
 module go.vanburen.xyz/cells
 
-go 1.26.0
+go 1.27.0
 
 require (
 	github.com/google/cel-go v0.30.0
