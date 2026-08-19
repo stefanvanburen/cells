@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"github.com/nalgeon/be"
-	"go.vanburen.xyz/cells/internal/lsp"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
+	"go.vanburen.xyz/cells/internal/lsp"
 )
 
 // newLSPClient starts a fresh LSP server on one end of an in-memory pipe and
