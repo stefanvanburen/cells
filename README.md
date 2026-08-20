@@ -77,6 +77,31 @@ $ cells rename --new-name=newVar file.cel:1:1
 $ cells rename --new-name=newVar --write file.cel:1:1
 ```
 
+## Extensions
+
+`cells` checks against plain CEL by default. Enable [cel-go extension libraries](https://pkg.go.dev/cel.dev/cel-go/ext)
+(`strings`, `math`, `network`, etc.) to match the environment your expressions actually run in.
+
+Also available: `optional` for [optional types](https://pkg.go.dev/cel.dev/cel-go/cel#OptionalTypes)
+(`?.`, `[?_]`, `optional.of`), and `jwt` and `hmac` from
+[cel-go's security extensions](https://pkg.go.dev/cel.dev/cel-go/ext/security).
+Enabling `regex` or `jwt` enables `optional` too, since both depend on it.
+
+On the CLI, pass `--ext` (repeatable) to any command:
+
+```console
+$ cells check --ext=network file.cel
+$ cells hover --ext=network --ext=strings file.cel:1:1
+```
+
+For the language server, set `extensions` in your editor's `initializationOptions`:
+
+```json
+{ "extensions": ["network", "strings"] }
+```
+
+Run `cells --help` for the full list of supported names.
+
 ## Usage
 
 ### Neovim

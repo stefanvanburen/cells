@@ -7,8 +7,8 @@ import (
 	"go.lsp.dev/protocol"
 )
 
-func newCELEnv() (*cel.Env, error) {
-	return cel.NewEnv(
+func newCELEnv(extraOpts ...cel.EnvOption) (*cel.Env, error) {
+	opts := []cel.EnvOption{
 		cel.EnableMacroCallTracking(),
 		// Validate the arguments to duration(), timestamp(), and matches()
 		// when they are literals. cel-go runs these during Check, so bad
@@ -24,13 +24,39 @@ func newCELEnv() (*cel.Env, error) {
 			cel.ValidateTimestampLiterals(),
 			cel.ValidateRegexLiterals(),
 		),
-	)
+	}
+	return cel.NewEnv(append(opts, extraOpts...)...)
+}
+
+// newCELEnvForExtensions builds a CEL environment with the named extension
+// libraries enabled (see extensionFactories for valid names).
+func newCELEnvForExtensions(names []string) (*cel.Env, error) {
+	opts, err := resolveExtensions(names)
+	if err != nil {
+		return nil, err
+	}
+	return newCELEnv(opts...)
+}
+
+// ExtensionNames returns the names of the CEL extension libraries that can be
+// passed to Serve, ServeStream, Format, Check, Hover, References, and Rename,
+// sorted alphabetically.
+func ExtensionNames() []string {
+	return sortedExtensionNames()
+}
+
+// ValidateExtensions reports an error naming the first extension in names
+// that is not one of ExtensionNames.
+func ValidateExtensions(names []string) error {
+	_, err := resolveExtensions(names)
+	return err
 }
 
 // Format formats the given CEL content.
 // Returns the original content unchanged if formatting is not possible (e.g., parse errors).
-func Format(content string) (string, error) {
-	env, err := newCELEnv()
+// extensions names CEL extension libraries to enable (see extensionFactories for valid names).
+func Format(content string, extensions ...string) (string, error) {
+	env, err := newCELEnvForExtensions(extensions)
 	if err != nil {
 		return "", err
 	}
@@ -48,8 +74,8 @@ type CheckDiagnostic struct {
 }
 
 // Check parses and type-checks the given CEL content, returning any diagnostics.
-func Check(content string) ([]CheckDiagnostic, error) {
-	env, err := newCELEnv()
+func Check(content string, extensions ...string) ([]CheckDiagnostic, error) {
+	env, err := newCELEnvForExtensions(extensions)
 	if err != nil {
 		return nil, err
 	}
@@ -75,8 +101,8 @@ func Check(content string) ([]CheckDiagnostic, error) {
 
 // Hover returns hover documentation for the element at the given 1-indexed line:col position.
 // Returns an empty string if no hover info is available.
-func Hover(content string, line, col int) (string, error) {
-	env, err := newCELEnv()
+func Hover(content string, line, col int, extensions ...string) (string, error) {
+	env, err := newCELEnvForExtensions(extensions)
 	if err != nil {
 		return "", err
 	}
@@ -104,8 +130,8 @@ type Reference struct {
 }
 
 // References returns all references to the identifier at the given 1-indexed line:col position.
-func References(content string, line, col int) ([]Reference, error) {
-	env, err := newCELEnv()
+func References(content string, line, col int, extensions ...string) ([]Reference, error) {
+	env, err := newCELEnvForExtensions(extensions)
 	if err != nil {
 		return nil, err
 	}
@@ -134,8 +160,8 @@ func References(content string, line, col int) ([]Reference, error) {
 
 // Rename renames the identifier at the given 1-indexed line:col to newName.
 // Returns the updated content, or the original content if nothing was renamed.
-func Rename(content string, line, col int, newName string) (string, error) {
-	env, err := newCELEnv()
+func Rename(content string, line, col int, newName string, extensions ...string) (string, error) {
+	env, err := newCELEnvForExtensions(extensions)
 	if err != nil {
 		return "", err
 	}

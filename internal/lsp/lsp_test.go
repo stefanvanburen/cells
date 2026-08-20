@@ -20,7 +20,10 @@ import (
 // inspect InitializeResult (or that supply their own protocol.Client, e.g. to
 // capture pushed notifications) can do so without setupLSPServer's extra
 // didOpen step.
-func newLSPClient(t *testing.T, client protocol.Client) jsonrpc2.Conn {
+//
+// defaultExtensions is passed through to ServeStream, standing in for the
+// extension names `cells serve --ext=...` would supply.
+func newLSPClient(t *testing.T, client protocol.Client, defaultExtensions ...string) jsonrpc2.Conn {
 	t.Helper()
 	ctx := t.Context()
 
@@ -33,7 +36,7 @@ func newLSPClient(t *testing.T, client protocol.Client) jsonrpc2.Conn {
 
 	// Run the LSP server on the server side of the pipe.
 	go func() {
-		_ = lsp.ServeStream(ctx, serverConn)
+		_ = lsp.ServeStream(ctx, serverConn, defaultExtensions...)
 	}()
 
 	_, clientRPC, _ := protocol.NewClient(ctx, client, jsonrpc2.NewStream(clientConn))
