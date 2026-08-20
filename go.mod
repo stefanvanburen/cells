@@ -3,7 +3,7 @@ module go.vanburen.xyz/cells
 go 1.27.0
 
 require (
-	github.com/google/cel-go v0.30.0
+	cel.dev/cel-go v0.32.0
 	github.com/nalgeon/be v0.3.0
 	github.com/pressly/cli v0.7.0
 	go.lsp.dev/jsonrpc2 v1.0.1

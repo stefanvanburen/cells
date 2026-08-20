@@ -5,8 +5,8 @@ import (
 	"unicode/utf16"
 	"unicode/utf8"
 
-	celast "github.com/google/cel-go/common/ast"
-	"github.com/google/cel-go/common/operators"
+	celast "cel.dev/cel-go/common/ast"
+	"cel.dev/cel-go/common/operators"
 )
 
 // isCELKeyword returns true if the identifier is a CEL reserved keyword.

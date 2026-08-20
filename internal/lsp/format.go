@@ -4,7 +4,7 @@ import (
 	"context"
 	"strings"
 
-	"github.com/google/cel-go/cel"
+	"cel.dev/cel-go/cel"
 	"go.lsp.dev/protocol"
 )
 

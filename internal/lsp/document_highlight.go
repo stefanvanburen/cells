@@ -4,8 +4,8 @@ import (
 	"context"
 	"strings"
 
-	"github.com/google/cel-go/cel"
-	"github.com/google/cel-go/common/ast"
+	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common/ast"
 	"go.lsp.dev/protocol"
 )
 

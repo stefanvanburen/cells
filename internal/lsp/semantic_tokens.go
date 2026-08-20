@@ -6,10 +6,10 @@ import (
 	"slices"
 	"unicode/utf16"
 
-	"github.com/google/cel-go/cel"
-	"github.com/google/cel-go/common/ast"
-	"github.com/google/cel-go/common/overloads"
-	"github.com/google/cel-go/common/types"
+	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common/ast"
+	"cel.dev/cel-go/common/overloads"
+	"cel.dev/cel-go/common/types"
 	"go.lsp.dev/protocol"
 )
 

@@ -3,7 +3,7 @@ package lsp
 import (
 	"slices"
 
-	"github.com/google/cel-go/cel"
+	"cel.dev/cel-go/cel"
 	"go.lsp.dev/protocol"
 )
 

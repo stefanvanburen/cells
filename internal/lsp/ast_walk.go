@@ -1,7 +1,7 @@
 package lsp
 
 import (
-	"github.com/google/cel-go/common/ast"
+	"cel.dev/cel-go/common/ast"
 	"go.lsp.dev/protocol"
 	lspuri "go.lsp.dev/uri"
 )
