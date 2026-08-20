@@ -41,7 +41,8 @@ $ cells format --diff --write file.cel
 
 ### `cells check`
 
-Check CEL source files for parse and type errors.
+Check CEL source files for parse and type errors, plus invalid `duration()`,
+`timestamp()`, and `matches()` literal arguments.
 Prints `file:line:col: error: message` for each diagnostic and exits 1 if any are found.
 
 ```console

@@ -224,6 +224,39 @@ func TestDiagnosticsTypeCheckErrors(t *testing.T) {
 	}
 }
 
+// --- Literal validation tests ---
+
+// The CEL environment enables cel-go's duration, timestamp, and regex literal
+// validators, which run during the check phase. These catch arguments that
+// type-check fine but can never evaluate.
+func TestDiagnosticsLiteralValidation(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name        string
+		file        string
+		wantContain string
+	}{
+		{"invalid duration", "invalid_duration.cel", "invalid duration argument"},
+		{"invalid timestamp", "invalid_timestamp.cel", "invalid timestamp argument"},
+		{"invalid regex", "invalid_regex.cel", "invalid matches argument"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			conn, uri := openDiagFile(t, tt.file)
+			diags := pullDiagnostics(t, conn, uri)
+
+			be.Equal(t, len(diags), 1)
+			be.Equal(t, diags[0].Severity, protocol.DiagnosticSeverityWarning)
+			be.Equal(t, diagSource(diags[0]), "cells")
+			be.True(t, containsSubstring(diagMessages(diags), tt.wantContain))
+		})
+	}
+}
+
 // --- Clean (no diagnostic) tests ---
 
 func TestDiagnosticsClean(t *testing.T) {
@@ -261,7 +294,9 @@ func TestDiagnosticsClean(t *testing.T) {
 		{"bytes conversion", "bytes_conversion.cel"},
 		{"type function", "type_function.cel"},
 		{"duration", "duration.cel"},
+		{"duration arithmetic", "duration_arithmetic.cel"},
 		{"timestamp", "timestamp.cel"},
+		{"timestamp accessor", "timestamp_accessor.cel"},
 		{"nested arithmetic", "nested_arithmetic.cel"},
 		{"unary minus", "unary_minus.cel"},
 		{"all macro", "all_macro.cel"},

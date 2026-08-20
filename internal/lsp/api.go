@@ -8,7 +8,23 @@ import (
 )
 
 func newCELEnv() (*cel.Env, error) {
-	return cel.NewEnv(cel.EnableMacroCallTracking())
+	return cel.NewEnv(
+		cel.EnableMacroCallTracking(),
+		// Validate the arguments to duration(), timestamp(), and matches()
+		// when they are literals. cel-go runs these during Check, so bad
+		// literals surface as diagnostics rather than as runtime errors the
+		// author only finds later.
+		//
+		// This is deliberately not cel.ExtendedValidations(), which also
+		// bundles ValidateHomogeneousAggregateLiterals(). Heterogeneous
+		// literals like [1, 'two'] are valid CEL — they type as list(dyn) —
+		// so flagging them would be a false positive.
+		cel.ASTValidators(
+			cel.ValidateDurationLiterals(),
+			cel.ValidateTimestampLiterals(),
+			cel.ValidateRegexLiterals(),
+		),
+	)
 }
 
 // Format formats the given CEL content.
