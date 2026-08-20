@@ -4,8 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nalgeon/be"
 	"go.lsp.dev/protocol"
+	"go.vanburen.xyz/ok"
 )
 
 // getHover sends a textDocument/hover request and returns the result.
@@ -25,7 +25,7 @@ func getHover(t *testing.T, celFile string, line, character uint32) *protocol.Ho
 			Character: character,
 		},
 	}, &result)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 	return result
 }
 
@@ -33,18 +33,18 @@ func getHover(t *testing.T, celFile string, line, character uint32) *protocol.Ho
 func requireHoverContains(t *testing.T, celFile string, line, character uint32, substr string, desc string) {
 	t.Helper()
 	result := getHover(t, celFile, line, character)
-	be.True(t, result != nil)
-	markup, ok := result.Contents.(*protocol.MarkupContent)
-	be.True(t, ok)
-	be.Equal(t, markup.Kind, protocol.MarkupKindMarkdown)
-	be.True(t, strings.Contains(markup.Value, substr))
+	ok.True(t, result != nil)
+	markup, isMarkup := result.Contents.(*protocol.MarkupContent)
+	ok.True(t, isMarkup)
+	ok.Equal(t, markup.Kind, protocol.MarkupKindMarkdown)
+	ok.True(t, strings.Contains(markup.Value, substr))
 }
 
 // requireNoHover asserts that hover at (line, char) returns nil.
 func requireNoHover(t *testing.T, celFile string, line, character uint32, desc string) {
 	t.Helper()
 	result := getHover(t, celFile, line, character)
-	be.True(t, result == nil)
+	ok.True(t, result == nil)
 }
 
 type hoverTestCase struct {

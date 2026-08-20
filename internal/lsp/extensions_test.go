@@ -5,10 +5,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nalgeon/be"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 	"go.vanburen.xyz/cells/internal/lsp"
+	"go.vanburen.xyz/ok"
 )
 
 // networkExpr type-checks only when the network extension is enabled.
@@ -30,10 +30,10 @@ func diagnosticsForExtensions(t *testing.T, defaultExtensions []string, initOpti
 	}
 	var initResult protocol.InitializeResult
 	_, err := clientRPC.Call(ctx, "initialize", params, &initResult)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	testURI := uri.File("/test.cel")
 	err = clientRPC.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
@@ -44,13 +44,13 @@ func diagnosticsForExtensions(t *testing.T, defaultExtensions []string, initOpti
 			Text:       expr,
 		},
 	})
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	var diagResult protocol.RelatedFullDocumentDiagnosticReport
 	_, err = clientRPC.Call(ctx, "textDocument/diagnostic", protocol.DocumentDiagnosticParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: testURI},
 	}, &diagResult)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	return diagResult.Items
 }
@@ -81,9 +81,9 @@ func TestExtensionResolution(t *testing.T) {
 
 			diags := diagnosticsForExtensions(t, tt.defaults, tt.initOptions, networkExpr)
 			if tt.wantClean {
-				be.Equal(t, len(diags), 0)
+				ok.Equal(t, len(diags), 0)
 			} else {
-				be.True(t, len(diags) > 0)
+				ok.True(t, len(diags) > 0)
 			}
 		})
 	}
@@ -99,7 +99,7 @@ func TestInitializeUnknownExtensionFails(t *testing.T) {
 	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{
 		InitializationOptions: protocol.LSPAny(`{"extensions":["nope"]}`),
 	}, &initResult)
-	be.Err(t, err, "unknown CEL extension")
+	ok.ErrorContains(t, err, "unknown CEL extension")
 }
 
 // TestExtensionFactories exercises every name in extensionFactories through
@@ -133,19 +133,19 @@ func TestExtensionFactories(t *testing.T) {
 	}
 	covered = append(covered, "protos") // exercised by TestExtensionProtos
 	slices.Sort(covered)
-	be.Equal(t, covered, lsp.ExtensionNames())
+	ok.DeepEqual(t, covered, lsp.ExtensionNames())
 
 	for _, tt := range tests {
 		t.Run(tt.ext, func(t *testing.T) {
 			t.Parallel()
 
 			with, err := lsp.Check(tt.expr, tt.ext)
-			be.Err(t, err, nil)
-			be.Equal(t, len(with), 0)
+			ok.MustNoError(t, err)
+			ok.Equal(t, len(with), 0)
 
 			without, err := lsp.Check(tt.expr)
-			be.Err(t, err, nil)
-			be.True(t, len(without) > 0)
+			ok.MustNoError(t, err)
+			ok.True(t, len(without) > 0)
 		})
 	}
 }
@@ -160,12 +160,16 @@ func TestExtensionProtos(t *testing.T) {
 	const expr = `proto.getExt(1, foo)`
 
 	with, err := lsp.Check(expr, "protos")
-	be.Err(t, err, nil)
-	be.Equal(t, len(with), 1)
-	be.Equal(t, with[0].Message, "invalid extension field")
+	ok.MustNoError(t, err)
+	if !ok.Equal(t, len(with), 1) {
+		return
+	}
+	ok.Equal(t, with[0].Message, "invalid extension field")
 
 	without, err := lsp.Check(expr)
-	be.Err(t, err, nil)
-	be.True(t, len(without) > 0)
-	be.True(t, strings.Contains(without[0].Message, "undeclared reference to 'proto'"))
+	ok.MustNoError(t, err)
+	if !ok.True(t, len(without) > 0) {
+		return
+	}
+	ok.True(t, strings.Contains(without[0].Message, "undeclared reference to 'proto'"))
 }

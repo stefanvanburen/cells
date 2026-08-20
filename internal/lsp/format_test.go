@@ -6,15 +6,15 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nalgeon/be"
 	"go.lsp.dev/protocol"
+	"go.vanburen.xyz/ok"
 )
 
 func TestFormat(t *testing.T) {
 	t.Parallel()
 
 	entries, err := os.ReadDir("testdata/format")
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	// Collect test cases from *.input.cel / *.golden.cel pairs.
 	type testCase struct {
@@ -46,14 +46,14 @@ func TestFormat(t *testing.T) {
 			t.Parallel()
 
 			golden, err := os.ReadFile(tt.golden)
-			be.Err(t, err, nil)
+			ok.MustNoError(t, err)
 
 			edits := requestFormatting(t, tt.input)
 			input, err := os.ReadFile(tt.input)
-			be.Err(t, err, nil)
+			ok.MustNoError(t, err)
 
 			got := applyEdits(string(input), edits)
-			be.Equal(t, got, string(golden))
+			ok.Equal(t, got, string(golden))
 		})
 	}
 }
@@ -62,7 +62,7 @@ func TestFormatParseError(t *testing.T) {
 	t.Parallel()
 	// Parse errors should return no edits (not crash).
 	edits := requestFormatting(t, "testdata/semantic_tokens/parse_error.cel")
-	be.Equal(t, len(edits), 0)
+	ok.Equal(t, len(edits), 0)
 }
 
 func TestFormatCapabilities(t *testing.T) {
@@ -72,9 +72,9 @@ func TestFormatCapabilities(t *testing.T) {
 
 	var result protocol.InitializeResult
 	_, err := clientRPC.Call(t.Context(), "initialize", protocol.InitializeParams{}, &result)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
-	be.True(t, result.Capabilities.DocumentFormattingProvider != nil)
+	ok.True(t, result.Capabilities.DocumentFormattingProvider != nil)
 }
 
 // requestFormatting opens a file and sends a textDocument/formatting request.
@@ -93,7 +93,7 @@ func requestFormatting(t *testing.T, celFile string) []protocol.TextEdit {
 			InsertSpaces: true,
 		},
 	}, &edits)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	return edits
 }

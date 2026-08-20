@@ -3,10 +3,10 @@ package lsp_test
 import (
 	"testing"
 
-	"github.com/nalgeon/be"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	lspuri "go.lsp.dev/uri"
+	"go.vanburen.xyz/ok"
 )
 
 // requestReferences sends a textDocument/references request at the given position.
@@ -18,7 +18,7 @@ func requestReferences(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos pro
 		"position":     map[string]any{"line": pos.Line, "character": pos.Character},
 		"context":      map[string]any{"includeDeclaration": true},
 	}, &result)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 	return result
 }
 
@@ -87,11 +87,11 @@ func TestReferences(t *testing.T) {
 			refs := requestReferences(t, conn, uri, tc.position)
 
 			// Verify exact count
-			be.Equal(t, len(refs), len(tc.expectedRanges))
+			ok.Equal(t, len(refs), len(tc.expectedRanges))
 
 			// Verify all references point to the same document
 			for _, ref := range refs {
-				be.Equal(t, ref.URI, uri)
+				ok.Equal(t, ref.URI, uri)
 			}
 
 			// Sort both slices for comparison (order not guaranteed)
@@ -104,10 +104,10 @@ func TestReferences(t *testing.T) {
 
 			// Verify exact positions
 			for i, expected := range tc.expectedRanges {
-				be.Equal(t, actualRanges[i].Start.Line, expected.Start.Line)
-				be.Equal(t, actualRanges[i].Start.Character, expected.Start.Character)
-				be.Equal(t, actualRanges[i].End.Line, expected.End.Line)
-				be.Equal(t, actualRanges[i].End.Character, expected.End.Character)
+				ok.Equal(t, actualRanges[i].Start.Line, expected.Start.Line)
+				ok.Equal(t, actualRanges[i].Start.Character, expected.Start.Character)
+				ok.Equal(t, actualRanges[i].End.Line, expected.End.Line)
+				ok.Equal(t, actualRanges[i].End.Character, expected.End.Character)
 			}
 		})
 	}
@@ -148,9 +148,9 @@ func TestReferencesConsistency(t *testing.T) {
 	refs3 := requestReferences(t, conn, uri, protocol.Position{Line: 0, Character: 8})
 
 	// All should return the same count
-	be.Equal(t, len(refs1), 3)
-	be.Equal(t, len(refs2), 3)
-	be.Equal(t, len(refs3), 3)
+	ok.Equal(t, len(refs1), 3)
+	ok.Equal(t, len(refs2), 3)
+	ok.Equal(t, len(refs3), 3)
 
 	// Collect ranges from all three requests
 	ranges1 := extractRanges(refs1)
@@ -170,12 +170,12 @@ func TestReferencesConsistency(t *testing.T) {
 	}
 
 	for i, expected := range expectedRanges {
-		be.Equal(t, ranges1[i].Start.Line, expected.Start.Line)
-		be.Equal(t, ranges1[i].Start.Character, expected.Start.Character)
-		be.Equal(t, ranges2[i].Start.Line, expected.Start.Line)
-		be.Equal(t, ranges2[i].Start.Character, expected.Start.Character)
-		be.Equal(t, ranges3[i].Start.Line, expected.Start.Line)
-		be.Equal(t, ranges3[i].Start.Character, expected.Start.Character)
+		ok.Equal(t, ranges1[i].Start.Line, expected.Start.Line)
+		ok.Equal(t, ranges1[i].Start.Character, expected.Start.Character)
+		ok.Equal(t, ranges2[i].Start.Line, expected.Start.Line)
+		ok.Equal(t, ranges2[i].Start.Character, expected.Start.Character)
+		ok.Equal(t, ranges3[i].Start.Line, expected.Start.Line)
+		ok.Equal(t, ranges3[i].Start.Character, expected.Start.Character)
 	}
 }
 

@@ -6,10 +6,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nalgeon/be"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	lspuri "go.lsp.dev/uri"
+	"go.vanburen.xyz/ok"
 )
 
 // setupCompletionServer initializes an LSP server and opens celFile for completion testing.
@@ -21,7 +21,7 @@ func setupCompletionServer(t *testing.T, celFile string) (jsonrpc2.Conn, lspuri.
 	clientConn, testURI := setupLSPServer(t, testPath)
 
 	content, err := os.ReadFile(testPath)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	return clientConn, testURI, string(content)
 }
@@ -73,7 +73,7 @@ func requestCompletion(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos pro
 			TriggerCharacter: &triggerChar,
 		},
 	}, &result)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 	return &result
 }
 
@@ -180,13 +180,15 @@ func TestCompletionDot(t *testing.T) {
 			copy(want, tt.wantLabels)
 			sort.Strings(want)
 
-			be.Equal(t, len(got), len(want))
+			if !ok.Equal(t, len(got), len(want)) {
+				return
+			}
 			for i := range got {
-				be.Equal(t, got[i], want[i])
+				ok.Equal(t, got[i], want[i])
 			}
 
 			for _, item := range result.Items {
-				be.Equal(t, item.Kind, protocol.CompletionItemKindMethod)
+				ok.Equal(t, item.Kind, protocol.CompletionItemKindMethod)
 			}
 		})
 	}
@@ -197,7 +199,7 @@ func TestCompletionDotUnknownReceiver(t *testing.T) {
 	result := requestDotCompletion(t, "testdata/completion/unknown_receiver.cel")
 
 	for _, want := range []string{"contains", "startsWith", "getFullYear", "size"} {
-		be.True(t, containsLabel(result.Items, want))
+		ok.True(t, containsLabel(result.Items, want))
 	}
 }
 
@@ -211,13 +213,15 @@ func TestCompletionInvokedAtDot(t *testing.T) {
 	got := completionLabels(result.Items)
 	want := []string{"contains", "endsWith", "matches", "size", "startsWith"}
 
-	be.Equal(t, len(got), len(want))
+	if !ok.Equal(t, len(got), len(want)) {
+		return
+	}
 	for i := range got {
-		be.Equal(t, got[i], want[i])
+		ok.Equal(t, got[i], want[i])
 	}
 
 	for _, absent := range []string{"timestamp", "int", "duration", "dyn", "true"} {
-		be.True(t, !containsLabel(result.Items, absent))
+		ok.True(t, !containsLabel(result.Items, absent))
 	}
 }
 
@@ -258,13 +262,13 @@ func TestCompletionInvoked(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.label, func(t *testing.T) {
 			item := findCompletionItem(result.Items, tt.label)
-			be.True(t, item != nil)
-			be.Equal(t, item.Kind, tt.kind)
+			ok.True(t, item != nil)
+			ok.Equal(t, item.Kind, tt.kind)
 		})
 	}
 
 	for _, absent := range []string{"contains", "startsWith", "endsWith", "getFullYear", "getMonth", "getHours"} {
-		be.True(t, !containsLabel(result.Items, absent))
+		ok.True(t, !containsLabel(result.Items, absent))
 	}
 }
 
@@ -308,10 +312,10 @@ func TestCompletionAfterOperator(t *testing.T) {
 			result := requestInvokedAtEnd(t, tt.file)
 
 			for _, want := range tt.wantPresent {
-				be.True(t, containsLabel(result.Items, want))
+				ok.True(t, containsLabel(result.Items, want))
 			}
 			for _, absent := range tt.wantAbsent {
-				be.True(t, !containsLabel(result.Items, absent))
+				ok.True(t, !containsLabel(result.Items, absent))
 			}
 		})
 	}
@@ -448,22 +452,22 @@ func TestCompletionItemProperties(t *testing.T) {
 			}
 
 			item := findCompletionItem(result.Items, tt.label)
-			be.True(t, item != nil)
+			ok.True(t, item != nil)
 
-			be.Equal(t, item.Kind, tt.wantKind)
+			ok.Equal(t, item.Kind, tt.wantKind)
 			insertText, _ := item.InsertText.Get()
-			be.Equal(t, insertText, tt.wantInsertText)
+			ok.Equal(t, insertText, tt.wantInsertText)
 
 			if tt.wantSnippet {
-				be.Equal(t, item.InsertTextFormat, protocol.InsertTextFormatSnippet)
+				ok.Equal(t, item.InsertTextFormat, protocol.InsertTextFormatSnippet)
 			} else {
-				be.Equal(t, item.InsertTextFormat, protocol.InsertTextFormat(0))
+				ok.Equal(t, item.InsertTextFormat, protocol.InsertTextFormat(0))
 			}
 
 			if tt.wantDoc {
-				be.True(t, item.Documentation != nil)
+				ok.True(t, item.Documentation != nil)
 			} else {
-				be.True(t, item.Documentation == nil)
+				ok.True(t, item.Documentation == nil)
 			}
 		})
 	}
@@ -482,7 +486,7 @@ func TestCompletionNoDuplicateMacros(t *testing.T) {
 			count++
 		}
 	}
-	be.Equal(t, count, 1)
+	ok.Equal(t, count, 1)
 }
 
 // --- No operators ---
@@ -496,7 +500,7 @@ func TestCompletionNoOperators(t *testing.T) {
 		t.Parallel()
 		result := requestInvokedCompletion(t, "testdata/completion/invoked.cel")
 		for _, op := range operators {
-			be.True(t, !containsLabel(result.Items, op))
+			ok.True(t, !containsLabel(result.Items, op))
 		}
 	})
 
@@ -504,7 +508,7 @@ func TestCompletionNoOperators(t *testing.T) {
 		t.Parallel()
 		result := requestDotCompletion(t, "testdata/completion/string_receiver.cel")
 		for _, op := range operators {
-			be.True(t, !containsLabel(result.Items, op))
+			ok.True(t, !containsLabel(result.Items, op))
 		}
 	})
 }
@@ -518,9 +522,9 @@ func TestCompletionCapabilities(t *testing.T) {
 
 	var result protocol.InitializeResult
 	_, err := clientRPC.Call(t.Context(), "initialize", protocol.InitializeParams{}, &result)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
-	be.True(t, result.Capabilities.CompletionProvider != nil)
-	be.True(t, len(result.Capabilities.CompletionProvider.TriggerCharacters) > 0)
-	be.Equal(t, result.Capabilities.CompletionProvider.TriggerCharacters[0], ".")
+	ok.True(t, result.Capabilities.CompletionProvider != nil)
+	ok.True(t, len(result.Capabilities.CompletionProvider.TriggerCharacters) > 0)
+	ok.Equal(t, result.Capabilities.CompletionProvider.TriggerCharacters[0], ".")
 }

@@ -3,10 +3,10 @@ package lsp_test
 import (
 	"testing"
 
-	"github.com/nalgeon/be"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	lspuri "go.lsp.dev/uri"
+	"go.vanburen.xyz/ok"
 )
 
 // requestRename sends a textDocument/rename request at the given position.
@@ -18,7 +18,7 @@ func requestRename(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos protoco
 		Position:     pos,
 		NewName:      newName,
 	}, &result)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 	return result
 }
 
@@ -276,7 +276,7 @@ func TestRename(t *testing.T) {
 					for _, edits := range result.Changes {
 						totalReplacements += len(edits)
 					}
-					be.Equal(t, totalReplacements, tc.expectedCount)
+					ok.Equal(t, totalReplacements, tc.expectedCount)
 				} else if tc.expectedCount > 0 {
 					// Result is nil but we expected replacements - still pass
 					// (identifier may not have been found)
@@ -285,9 +285,9 @@ func TestRename(t *testing.T) {
 			case typePrepare:
 				result := requestPrepareRename(t, conn, uri, tc.position)
 				if tc.canRename {
-					be.True(t, result != nil)
+					ok.True(t, result != nil)
 				} else {
-					be.True(t, result == nil)
+					ok.True(t, result == nil)
 				}
 			}
 		})

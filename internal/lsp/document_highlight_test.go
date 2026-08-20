@@ -3,10 +3,10 @@ package lsp_test
 import (
 	"testing"
 
-	"github.com/nalgeon/be"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	lspuri "go.lsp.dev/uri"
+	"go.vanburen.xyz/ok"
 )
 
 // requestDocumentHighlight sends a textDocument/documentHighlight request at the given position.
@@ -17,7 +17,7 @@ func requestDocumentHighlight(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, 
 		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
 		Position:     pos,
 	}, &result)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 	return result
 }
 
@@ -97,7 +97,7 @@ func TestDocumentHighlight(t *testing.T) {
 			highlights := requestDocumentHighlight(t, conn, uri, tc.position)
 
 			// Verify exact count
-			be.Equal(t, len(highlights), len(tc.expectedRanges))
+			ok.Equal(t, len(highlights), len(tc.expectedRanges))
 
 			// Sort both slices for comparison (order not guaranteed)
 			actualRanges := make([]protocol.Range, len(highlights))
@@ -109,10 +109,10 @@ func TestDocumentHighlight(t *testing.T) {
 
 			// Verify exact positions
 			for i, expected := range tc.expectedRanges {
-				be.Equal(t, actualRanges[i].Start.Line, expected.Start.Line)
-				be.Equal(t, actualRanges[i].Start.Character, expected.Start.Character)
-				be.Equal(t, actualRanges[i].End.Line, expected.End.Line)
-				be.Equal(t, actualRanges[i].End.Character, expected.End.Character)
+				ok.Equal(t, actualRanges[i].Start.Line, expected.Start.Line)
+				ok.Equal(t, actualRanges[i].Start.Character, expected.Start.Character)
+				ok.Equal(t, actualRanges[i].End.Line, expected.End.Line)
+				ok.Equal(t, actualRanges[i].End.Character, expected.End.Character)
 			}
 		})
 	}
@@ -153,9 +153,9 @@ func TestDocumentHighlightConsistency(t *testing.T) {
 	highlights3 := requestDocumentHighlight(t, conn, uri, protocol.Position{Line: 0, Character: 8})
 
 	// All should return the same count
-	be.Equal(t, len(highlights1), 3)
-	be.Equal(t, len(highlights2), 3)
-	be.Equal(t, len(highlights3), 3)
+	ok.Equal(t, len(highlights1), 3)
+	ok.Equal(t, len(highlights2), 3)
+	ok.Equal(t, len(highlights3), 3)
 
 	// Collect ranges from all three requests
 	ranges1 := extractHighlightRanges(highlights1)
@@ -175,12 +175,12 @@ func TestDocumentHighlightConsistency(t *testing.T) {
 	}
 
 	for i, expected := range expectedRanges {
-		be.Equal(t, ranges1[i].Start.Line, expected.Start.Line)
-		be.Equal(t, ranges1[i].Start.Character, expected.Start.Character)
-		be.Equal(t, ranges2[i].Start.Line, expected.Start.Line)
-		be.Equal(t, ranges2[i].Start.Character, expected.Start.Character)
-		be.Equal(t, ranges3[i].Start.Line, expected.Start.Line)
-		be.Equal(t, ranges3[i].Start.Character, expected.Start.Character)
+		ok.Equal(t, ranges1[i].Start.Line, expected.Start.Line)
+		ok.Equal(t, ranges1[i].Start.Character, expected.Start.Character)
+		ok.Equal(t, ranges2[i].Start.Line, expected.Start.Line)
+		ok.Equal(t, ranges2[i].Start.Character, expected.Start.Character)
+		ok.Equal(t, ranges3[i].Start.Line, expected.Start.Line)
+		ok.Equal(t, ranges3[i].Start.Character, expected.Start.Character)
 	}
 }
 
