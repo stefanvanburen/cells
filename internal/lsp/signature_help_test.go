@@ -4,10 +4,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/nalgeon/be"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	lspuri "go.lsp.dev/uri"
+	"go.vanburen.xyz/ok"
 )
 
 // requestSignatureHelp sends a textDocument/signatureHelp request at the given position.
@@ -18,7 +18,7 @@ func requestSignatureHelp(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos 
 		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
 		Position:     pos,
 	}, &result)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 	return result
 }
 
@@ -105,28 +105,28 @@ func TestSignatureHelp(t *testing.T) {
 			sig := requestSignatureHelp(t, conn, uri, tc.pos)
 
 			if !tc.wantSignatures {
-				be.Equal(t, sig, (*protocol.SignatureHelp)(nil))
+				ok.Zero(t, sig)
 				return
 			}
 
-			be.True(t, sig != nil)
-			be.True(t, len(sig.Signatures) > 0)
+			ok.True(t, sig != nil)
+			ok.True(t, len(sig.Signatures) > 0)
 
 			if tc.wantExactLabel != "" {
-				be.Equal(t, sig.Signatures[0].Label, tc.wantExactLabel)
+				ok.Equal(t, sig.Signatures[0].Label, tc.wantExactLabel)
 			}
 
 			if tc.wantLabelContains != "" {
-				be.True(t, strings.Contains(sig.Signatures[0].Label, tc.wantLabelContains))
+				ok.True(t, strings.Contains(sig.Signatures[0].Label, tc.wantLabelContains))
 			}
 
 			if tc.wantNotContains != "" {
-				be.True(t, !strings.Contains(sig.Signatures[0].Label, tc.wantNotContains))
+				ok.True(t, !strings.Contains(sig.Signatures[0].Label, tc.wantNotContains))
 			}
 
 			if tc.wantActiveParam != nil {
 				got, _ := sig.ActiveParameter.Get()
-				be.Equal(t, got, *tc.wantActiveParam)
+				ok.Equal(t, got, *tc.wantActiveParam)
 			}
 		})
 	}
@@ -141,8 +141,8 @@ func TestSignatureHelpCapabilities(t *testing.T) {
 
 	var result protocol.InitializeResult
 	_, err := clientRPC.Call(t.Context(), "initialize", protocol.InitializeParams{}, &result)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
-	be.True(t, result.Capabilities.SignatureHelpProvider != nil)
-	be.True(t, len(result.Capabilities.SignatureHelpProvider.TriggerCharacters) > 0)
+	ok.True(t, result.Capabilities.SignatureHelpProvider != nil)
+	ok.True(t, len(result.Capabilities.SignatureHelpProvider.TriggerCharacters) > 0)
 }

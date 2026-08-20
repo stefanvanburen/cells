@@ -4,8 +4,8 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/nalgeon/be"
 	"go.lsp.dev/protocol"
+	"go.vanburen.xyz/ok"
 )
 
 // semanticToken represents a decoded semantic token for easier testing.
@@ -95,9 +95,9 @@ func getSemanticTokens(t *testing.T, celFile string) []semanticToken {
 			URI: testURI,
 		},
 	}, &result)
-	be.Err(t, err, nil)
-	be.True(t, result != nil)
-	be.True(t, len(result.Data) > 0)
+	ok.MustNoError(t, err)
+	ok.True(t, result != nil)
+	ok.True(t, len(result.Data) > 0)
 	return decodeSemanticTokens(result.Data)
 }
 
@@ -113,14 +113,14 @@ func getNilSemanticTokens(t *testing.T, celFile string) {
 			URI: testURI,
 		},
 	}, &result)
-	be.Err(t, err, nil)
-	be.True(t, result == nil)
+	ok.MustNoError(t, err)
+	ok.True(t, result == nil)
 }
 
 func assertTokens(t *testing.T, tokens []semanticToken, expected []expectedToken) {
 	t.Helper()
 	for _, exp := range expected {
-		be.True(t, findToken(tokens, exp.line, exp.startChar, exp.length, exp.tokenType))
+		ok.True(t, findToken(tokens, exp.line, exp.startChar, exp.length, exp.tokenType))
 	}
 }
 
@@ -536,82 +536,82 @@ func TestSemanticTokensComprehensive(t *testing.T) {
 
 	// The comprehensive file is 121 lines with comments and exercises every feature.
 	// There should be a significant number of tokens.
-	be.True(t, len(tokens) >= 80)
+	ok.True(t, len(tokens) >= 80)
 
 	// Spot-check specific token types on specific lines (0-indexed).
 	// Line 7: (x + y) * 2 - z / w % 3 >= 10 &&
-	be.True(t, findTokenOnLine(tokens, 7, stOperator))
-	be.True(t, findTokenOnLine(tokens, 7, stNumber))
+	ok.True(t, findTokenOnLine(tokens, 7, stOperator))
+	ok.True(t, findTokenOnLine(tokens, 7, stNumber))
 
 	// Line 10: "hello world".contains("world") &&
-	be.True(t, findTokenOnLine(tokens, 10, stString))
-	be.True(t, findTokenOnLine(tokens, 10, stMethod))
+	ok.True(t, findTokenOnLine(tokens, 10, stString))
+	ok.True(t, findTokenOnLine(tokens, 10, stMethod))
 
 	// Line 11: "hello".startsWith("he") &&
-	be.True(t, findTokenOnLine(tokens, 11, stMethod))
+	ok.True(t, findTokenOnLine(tokens, 11, stMethod))
 
 	// Line 14: size("test") == 4 &&
-	be.True(t, findTokenOnLine(tokens, 14, stFunction))
+	ok.True(t, findTokenOnLine(tokens, 14, stFunction))
 
 	// Line 17: int("42") + double("3.14") > 0.0 &&
-	be.True(t, findTokenOnLine(tokens, 17, stType))
+	ok.True(t, findTokenOnLine(tokens, 17, stType))
 
 	// Line 20: bool("true") == true &&
-	be.True(t, findTokenOnLine(tokens, 20, stKeyword))
+	ok.True(t, findTokenOnLine(tokens, 20, stKeyword))
 
 	// Line 33: has({"field": true}.field) &&
-	be.True(t, findTokenOnLine(tokens, 33, stMacro))
+	ok.True(t, findTokenOnLine(tokens, 33, stMacro))
 
 	// Line 36: "a" in ["a", "b", "c"] &&
-	be.True(t, findTokenOnLine(tokens, 36, stOperator))
+	ok.True(t, findTokenOnLine(tokens, 36, stOperator))
 
 	// Line 40: [1, 2, 3].all(i, i > 0) &&
-	be.True(t, findTokenOnLine(tokens, 40, stMacro))
+	ok.True(t, findTokenOnLine(tokens, 40, stMacro))
 
 	// Line 43: [1, 2, 3].exists(i, i == 2) &&
-	be.True(t, findTokenOnLine(tokens, 43, stMacro))
+	ok.True(t, findTokenOnLine(tokens, 43, stMacro))
 
 	// Line 46: [1, 2, 3].exists_one(i, i > 2) &&
-	be.True(t, findTokenOnLine(tokens, 46, stMacro))
+	ok.True(t, findTokenOnLine(tokens, 46, stMacro))
 
 	// Line 49: [1, 2, 3].map(i, i * 2) == [2, 4, 6] &&
-	be.True(t, findTokenOnLine(tokens, 49, stMacro))
+	ok.True(t, findTokenOnLine(tokens, 49, stMacro))
 
 	// Line 52: [1, 2, 3, 4, 5].filter(i, i > 3) == [4, 5] &&
-	be.True(t, findTokenOnLine(tokens, 52, stMacro))
+	ok.True(t, findTokenOnLine(tokens, 52, stMacro))
 
 	// Line 55: nested macros
-	be.True(t, findTokenOnLine(tokens, 55, stMacro))
+	ok.True(t, findTokenOnLine(tokens, 55, stMacro))
 
 	// Line 58: ternary
-	be.True(t, findTokenOnLine(tokens, 58, stOperator))
+	ok.True(t, findTokenOnLine(tokens, 58, stOperator))
 
 	// Line 62: true || false &&
-	be.True(t, findTokenOnLine(tokens, 62, stKeyword))
+	ok.True(t, findTokenOnLine(tokens, 62, stKeyword))
 
 	// Line 73: !false &&
-	be.True(t, findTokenOnLine(tokens, 73, stKeyword))
+	ok.True(t, findTokenOnLine(tokens, 73, stKeyword))
 
 	// Line 81: null == null &&
-	be.True(t, findTokenOnLine(tokens, 81, stKeyword))
+	ok.True(t, findTokenOnLine(tokens, 81, stKeyword))
 
 	// Line 84: b"hello" == bytes("hello") &&
-	be.True(t, findTokenOnLine(tokens, 84, stString))
+	ok.True(t, findTokenOnLine(tokens, 84, stString))
 
 	// Line 91: "Hello World".endsWith("World") &&
-	be.True(t, findTokenOnLine(tokens, 91, stMethod))
+	ok.True(t, findTokenOnLine(tokens, 91, stMethod))
 
 	// Line 96: multi-line comprehension filter
-	be.True(t, findTokenOnLine(tokens, 96, stMacro))
+	ok.True(t, findTokenOnLine(tokens, 96, stMacro))
 
 	// Line 102: duration("1h") > duration("30m") &&
-	be.True(t, findTokenOnLine(tokens, 102, stType))
+	ok.True(t, findTokenOnLine(tokens, 102, stType))
 
 	// Line 103: timestamp type conversion
-	be.True(t, findTokenOnLine(tokens, 103, stType))
+	ok.True(t, findTokenOnLine(tokens, 103, stType))
 
 	// Line 120: x + y == z
-	be.True(t, findTokenOnLine(tokens, 120, stOperator))
+	ok.True(t, findTokenOnLine(tokens, 120, stOperator))
 
 	// Verify all major token types are present across the file.
 	typesSeen := make(map[uint32]bool)
@@ -619,6 +619,6 @@ func TestSemanticTokensComprehensive(t *testing.T) {
 		typesSeen[tok.tokenType] = true
 	}
 	for _, expected := range []uint32{stOperator, stNumber, stString, stMethod, stFunction, stType, stMacro, stKeyword, stVariable} {
-		be.True(t, typesSeen[expected])
+		ok.True(t, typesSeen[expected])
 	}
 }

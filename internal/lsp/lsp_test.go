@@ -6,11 +6,11 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/nalgeon/be"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 	"go.vanburen.xyz/cells/internal/lsp"
+	"go.vanburen.xyz/ok"
 )
 
 // newLSPClient starts a fresh LSP server on one end of an in-memory pipe and
@@ -58,13 +58,13 @@ func setupLSPServer(t *testing.T, testFilePath string) (jsonrpc2.Conn, uri.URI) 
 
 	var initResult protocol.InitializeResult
 	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	content, err := os.ReadFile(testFilePath)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	err = clientRPC.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
 		TextDocument: protocol.TextDocumentItem{
@@ -74,7 +74,7 @@ func setupLSPServer(t *testing.T, testFilePath string) (jsonrpc2.Conn, uri.URI) 
 			Text:       string(content),
 		},
 	})
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	return clientRPC, testURI
 }
@@ -83,6 +83,6 @@ func setupLSPServer(t *testing.T, testFilePath string) (jsonrpc2.Conn, uri.URI) 
 func getAbsPath(t *testing.T, relPath string) string {
 	t.Helper()
 	absPath, err := filepath.Abs(relPath)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 	return absPath
 }

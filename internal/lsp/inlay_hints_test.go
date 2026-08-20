@@ -3,8 +3,8 @@ package lsp_test
 import (
 	"testing"
 
-	"github.com/nalgeon/be"
 	"go.lsp.dev/protocol"
+	"go.vanburen.xyz/ok"
 )
 
 // getInlayHints sends a textDocument/inlayHint request and returns the result.
@@ -24,7 +24,7 @@ func getInlayHints(t *testing.T, celFile string) []protocol.InlayHint {
 			End:   protocol.Position{Line: 1000, Character: 1000},
 		},
 	}, &result)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 	return result
 }
 
@@ -82,16 +82,16 @@ func TestInlayHints(t *testing.T) {
 			hints := getInlayHints(t, tt.file)
 
 			if tt.expectHint {
-				be.True(t, len(hints) > 0)
-				labelParts, ok := hints[0].Label.(protocol.InlayHintLabelPartSlice)
-				be.True(t, ok)
-				be.True(t, len(labelParts) > 0)
+				ok.True(t, len(hints) > 0)
+				labelParts, isParts := hints[0].Label.(protocol.InlayHintLabelPartSlice)
+				ok.True(t, isParts)
+				ok.True(t, len(labelParts) > 0)
 				hintText := labelParts[0].Value
-				be.True(t, len(hintText) > 0)
+				ok.True(t, len(hintText) > 0)
 				// Check if result is in the hint (after the arrow)
-				be.True(t, len(hintText) >= 2)
+				ok.True(t, len(hintText) >= 2)
 			} else {
-				be.True(t, len(hints) == 0)
+				ok.True(t, len(hints) == 0)
 			}
 		})
 	}

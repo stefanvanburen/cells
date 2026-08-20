@@ -8,10 +8,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/nalgeon/be"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	lspuri "go.lsp.dev/uri"
+	"go.vanburen.xyz/ok"
 )
 
 // diagMessage extracts the plain-string form of a Diagnostic's Message
@@ -41,8 +41,8 @@ func pullDiagnostics(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI) []protoco
 	_, err := conn.Call(t.Context(), "textDocument/diagnostic", protocol.DocumentDiagnosticParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: uri},
 	}, &result)
-	be.Err(t, err, nil)
-	be.Equal(t, result.Kind, string(protocol.DocumentDiagnosticReportKindFull))
+	ok.MustNoError(t, err)
+	ok.Equal(t, result.Kind, string(protocol.DocumentDiagnosticReportKindFull))
 	return result.Items
 }
 
@@ -68,7 +68,7 @@ func containsSubstring(strs []string, sub string) bool {
 func openDiagFile(t *testing.T, name string) (jsonrpc2.Conn, lspuri.URI) {
 	t.Helper()
 	testPath, err := filepath.Abs(filepath.Join("testdata", "diagnostics", name))
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 	return setupDiagServer(t, testPath)
 }
 
@@ -108,12 +108,12 @@ func TestDiagnosticsParseErrors(t *testing.T) {
 			conn, uri := openDiagFile(t, tt.file)
 			diags := pullDiagnostics(t, conn, uri)
 
-			be.True(t, len(diags) > 0)
+			ok.True(t, len(diags) > 0)
 			for _, d := range diags {
-				be.Equal(t, d.Severity, protocol.DiagnosticSeverityError)
-				be.Equal(t, diagSource(d), "cells")
+				ok.Equal(t, d.Severity, protocol.DiagnosticSeverityError)
+				ok.Equal(t, diagSource(d), "cells")
 			}
-			be.True(t, containsSubstring(diagMessages(diags), tt.wantContain))
+			ok.True(t, containsSubstring(diagMessages(diags), tt.wantContain))
 		})
 	}
 }
@@ -205,19 +205,19 @@ func TestDiagnosticsTypeCheckErrors(t *testing.T) {
 			conn, uri := openDiagFile(t, tt.file)
 			diags := pullDiagnostics(t, conn, uri)
 
-			be.True(t, len(diags) > 0)
+			ok.True(t, len(diags) > 0)
 			for _, d := range diags {
-				be.Equal(t, d.Severity, protocol.DiagnosticSeverityWarning)
-				be.Equal(t, diagSource(d), "cells")
+				ok.Equal(t, d.Severity, protocol.DiagnosticSeverityWarning)
+				ok.Equal(t, diagSource(d), "cells")
 			}
 			if tt.wantCount > 0 {
-				be.Equal(t, len(diags), tt.wantCount)
+				ok.Equal(t, len(diags), tt.wantCount)
 			}
 			msgs := diagMessages(diags)
-			be.True(t, containsSubstring(msgs, tt.wantContain))
+			ok.True(t, containsSubstring(msgs, tt.wantContain))
 			if tt.wantNot != "" {
 				for _, msg := range msgs {
-					be.True(t, !strings.Contains(msg, tt.wantNot))
+					ok.True(t, !strings.Contains(msg, tt.wantNot))
 				}
 			}
 		})
@@ -249,10 +249,12 @@ func TestDiagnosticsLiteralValidation(t *testing.T) {
 			conn, uri := openDiagFile(t, tt.file)
 			diags := pullDiagnostics(t, conn, uri)
 
-			be.Equal(t, len(diags), 1)
-			be.Equal(t, diags[0].Severity, protocol.DiagnosticSeverityWarning)
-			be.Equal(t, diagSource(diags[0]), "cells")
-			be.True(t, containsSubstring(diagMessages(diags), tt.wantContain))
+			if !ok.Equal(t, len(diags), 1) {
+				return
+			}
+			ok.Equal(t, diags[0].Severity, protocol.DiagnosticSeverityWarning)
+			ok.Equal(t, diagSource(diags[0]), "cells")
+			ok.True(t, containsSubstring(diagMessages(diags), tt.wantContain))
 		})
 	}
 }
@@ -325,7 +327,7 @@ func TestDiagnosticsClean(t *testing.T) {
 			conn, uri := openDiagFile(t, tt.file)
 			diags := pullDiagnostics(t, conn, uri)
 
-			be.True(t, len(diags) == 0)
+			ok.True(t, len(diags) == 0)
 		})
 	}
 }
@@ -355,11 +357,11 @@ func TestDiagnosticsParseErrorPositions(t *testing.T) {
 			conn, uri := openDiagFile(t, tt.file)
 			diags := pullDiagnostics(t, conn, uri)
 
-			be.True(t, len(diags) > 0)
+			ok.True(t, len(diags) > 0)
 			first := diags[0]
-			be.Equal(t, first.Range.Start.Line, tt.wantLine)
-			be.Equal(t, first.Range.Start.Character, tt.wantCol)
-			be.Equal(t, first.Severity, protocol.DiagnosticSeverityError)
+			ok.Equal(t, first.Range.Start.Line, tt.wantLine)
+			ok.Equal(t, first.Range.Start.Character, tt.wantCol)
+			ok.Equal(t, first.Severity, protocol.DiagnosticSeverityError)
 		})
 	}
 }
@@ -386,11 +388,11 @@ func TestDiagnosticsTypeCheckPositions(t *testing.T) {
 			conn, uri := openDiagFile(t, tt.file)
 			diags := pullDiagnostics(t, conn, uri)
 
-			be.True(t, len(diags) > 0)
+			ok.True(t, len(diags) > 0)
 			first := diags[0]
-			be.Equal(t, first.Range.Start.Line, tt.wantLine)
-			be.Equal(t, first.Range.Start.Character, tt.wantCol)
-			be.Equal(t, first.Severity, protocol.DiagnosticSeverityWarning)
+			ok.Equal(t, first.Range.Start.Line, tt.wantLine)
+			ok.Equal(t, first.Range.Start.Character, tt.wantCol)
+			ok.Equal(t, first.Severity, protocol.DiagnosticSeverityWarning)
 		})
 	}
 }
@@ -403,11 +405,11 @@ func TestDiagnosticsRangeEndsAtEndOfLine(t *testing.T) {
 	conn, uri := openDiagFile(t, "int_plus_string.cel")
 	diags := pullDiagnostics(t, conn, uri)
 
-	be.True(t, len(diags) > 0)
+	ok.True(t, len(diags) > 0)
 	d := diags[0]
-	be.Equal(t, d.Range.Start.Line, uint32(0))
-	be.Equal(t, d.Range.End.Line, uint32(0))
-	be.Equal(t, d.Range.End.Character, uint32(11))
+	ok.Equal(t, d.Range.Start.Line, uint32(0))
+	ok.Equal(t, d.Range.End.Line, uint32(0))
+	ok.Equal(t, d.Range.End.Character, uint32(11))
 }
 
 func TestDiagnosticsRangeSameLine(t *testing.T) {
@@ -416,9 +418,9 @@ func TestDiagnosticsRangeSameLine(t *testing.T) {
 	conn, uri := openDiagFile(t, "multiline_parse_error.cel")
 	diags := pullDiagnostics(t, conn, uri)
 
-	be.True(t, len(diags) > 0)
+	ok.True(t, len(diags) > 0)
 	d := diags[0]
-	be.Equal(t, d.Range.Start.Line, d.Range.End.Line)
+	ok.Equal(t, d.Range.Start.Line, d.Range.End.Line)
 }
 
 // --- Multiple diagnostics tests ---
@@ -429,16 +431,16 @@ func TestDiagnosticsMultipleUndeclared(t *testing.T) {
 	conn, uri := openDiagFile(t, "three_undeclared.cel")
 	diags := pullDiagnostics(t, conn, uri)
 
-	be.Equal(t, len(diags), 3)
+	ok.Equal(t, len(diags), 3)
 
 	messages := diagMessages(diags)
-	be.True(t, containsSubstring(messages, "'x'"))
-	be.True(t, containsSubstring(messages, "'y'"))
-	be.True(t, containsSubstring(messages, "'z'"))
+	ok.True(t, containsSubstring(messages, "'x'"))
+	ok.True(t, containsSubstring(messages, "'y'"))
+	ok.True(t, containsSubstring(messages, "'z'"))
 
-	be.Equal(t, diags[0].Range.Start.Character, uint32(0)) // x
-	be.Equal(t, diags[1].Range.Start.Character, uint32(4)) // y
-	be.Equal(t, diags[2].Range.Start.Character, uint32(8)) // z
+	ok.Equal(t, diags[0].Range.Start.Character, uint32(0)) // x
+	ok.Equal(t, diags[1].Range.Start.Character, uint32(4)) // y
+	ok.Equal(t, diags[2].Range.Start.Character, uint32(8)) // z
 }
 
 func TestDiagnosticsMultipleParseErrors(t *testing.T) {
@@ -447,9 +449,9 @@ func TestDiagnosticsMultipleParseErrors(t *testing.T) {
 	conn, uri := openDiagFile(t, "unterminated_string.cel")
 	diags := pullDiagnostics(t, conn, uri)
 
-	be.True(t, len(diags) >= 2)
+	ok.True(t, len(diags) >= 2)
 	for _, d := range diags {
-		be.Equal(t, d.Severity, protocol.DiagnosticSeverityError)
+		ok.Equal(t, d.Severity, protocol.DiagnosticSeverityError)
 	}
 }
 
@@ -498,10 +500,12 @@ func TestDiagnosticsOnChange(t *testing.T) {
 			diags := pullDiagnostics(t, conn, uri)
 
 			if tt.startSev == 0 {
-				be.Equal(t, len(diags), 0)
+				ok.Equal(t, len(diags), 0)
 			} else {
-				be.True(t, len(diags) > 0)
-				be.Equal(t, diags[0].Severity, tt.startSev)
+				if !ok.True(t, len(diags) > 0) {
+					return
+				}
+				ok.Equal(t, diags[0].Severity, tt.startSev)
 			}
 
 			err := conn.Notify(t.Context(), "textDocument/didChange", protocol.DidChangeTextDocumentParams{
@@ -513,16 +517,18 @@ func TestDiagnosticsOnChange(t *testing.T) {
 					&protocol.TextDocumentContentChangeWholeDocument{Text: tt.changeText},
 				},
 			})
-			be.Err(t, err, nil)
+			ok.MustNoError(t, err)
 
 			diags = pullDiagnostics(t, conn, uri)
 			if tt.changeSev == 0 {
-				be.Equal(t, len(diags), 0)
+				ok.Equal(t, len(diags), 0)
 			} else {
-				be.True(t, len(diags) > 0)
-				be.Equal(t, diags[0].Severity, tt.changeSev)
+				if !ok.True(t, len(diags) > 0) {
+					return
+				}
+				ok.Equal(t, diags[0].Severity, tt.changeSev)
 				if tt.changeMsg != "" {
-					be.True(t, strings.Contains(diagMessage(diags[0]), tt.changeMsg))
+					ok.True(t, strings.Contains(diagMessage(diags[0]), tt.changeMsg))
 				}
 			}
 		})
@@ -535,7 +541,7 @@ func TestDiagnosticsPullUnknownFile(t *testing.T) {
 	t.Parallel()
 
 	conn, _ := openDiagFile(t, "clean.cel")
-	be.Equal(t, len(pullDiagnostics(t, conn, "file:///nonexistent.cel")), 0)
+	ok.Equal(t, len(pullDiagnostics(t, conn, "file:///nonexistent.cel")), 0)
 }
 
 // --- Push diagnostics tests ---
@@ -577,7 +583,7 @@ func (dc *diagnosticCollector) waitForDiagnostics(t *testing.T, n int) {
 		select {
 		case <-dc.ch:
 		case <-deadline:
-			be.Equal(t, got, n)
+			ok.Equal(t, got, n)
 			return
 		}
 	}
@@ -598,9 +604,9 @@ func TestDiagnosticsPushOnOpen(t *testing.T) {
 
 	var initResult protocol.InitializeResult
 	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	testURI := lspuri.URI("file:///test.cel")
 
@@ -612,13 +618,13 @@ func TestDiagnosticsPushOnOpen(t *testing.T) {
 			Text:       "1 +",
 		},
 	})
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	dc.waitForDiagnostics(t, 1)
 	params := dc.latest()
-	be.Equal(t, string(params.URI), string(testURI))
-	be.True(t, len(params.Diagnostics) > 0)
-	be.Equal(t, params.Diagnostics[0].Severity, protocol.DiagnosticSeverityError)
+	ok.Equal(t, string(params.URI), string(testURI))
+	ok.True(t, len(params.Diagnostics) > 0)
+	ok.Equal(t, params.Diagnostics[0].Severity, protocol.DiagnosticSeverityError)
 }
 
 func TestDiagnosticsPushOnChange(t *testing.T) {
@@ -630,9 +636,9 @@ func TestDiagnosticsPushOnChange(t *testing.T) {
 
 	var initResult protocol.InitializeResult
 	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	testURI := lspuri.URI("file:///test.cel")
 
@@ -645,10 +651,10 @@ func TestDiagnosticsPushOnChange(t *testing.T) {
 			Text:       "1 + 2",
 		},
 	})
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	dc.waitForDiagnostics(t, 1)
-	be.Equal(t, len(dc.latest().Diagnostics), 0)
+	ok.Equal(t, len(dc.latest().Diagnostics), 0)
 
 	// Change to invalid content.
 	err = clientRPC.Notify(ctx, "textDocument/didChange", protocol.DidChangeTextDocumentParams{
@@ -660,12 +666,12 @@ func TestDiagnosticsPushOnChange(t *testing.T) {
 			&protocol.TextDocumentContentChangeWholeDocument{Text: "1 +"},
 		},
 	})
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	dc.waitForDiagnostics(t, 2)
 	params := dc.latest()
-	be.True(t, len(params.Diagnostics) > 0)
-	be.Equal(t, params.Diagnostics[0].Severity, protocol.DiagnosticSeverityError)
+	ok.True(t, len(params.Diagnostics) > 0)
+	ok.Equal(t, params.Diagnostics[0].Severity, protocol.DiagnosticSeverityError)
 
 	// Change back to valid.
 	err = clientRPC.Notify(ctx, "textDocument/didChange", protocol.DidChangeTextDocumentParams{
@@ -677,10 +683,10 @@ func TestDiagnosticsPushOnChange(t *testing.T) {
 			&protocol.TextDocumentContentChangeWholeDocument{Text: "1 + 2"},
 		},
 	})
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	dc.waitForDiagnostics(t, 3)
-	be.Equal(t, len(dc.latest().Diagnostics), 0)
+	ok.Equal(t, len(dc.latest().Diagnostics), 0)
 }
 
 // --- Comprehensive file test ---
@@ -689,15 +695,15 @@ func TestDiagnosticsComprehensive(t *testing.T) {
 	t.Parallel()
 
 	testPath, err := filepath.Abs("testdata/hover/comprehensive.cel")
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	conn, uri := setupDiagServer(t, testPath)
 	diags := pullDiagnostics(t, conn, uri)
 
-	be.True(t, len(diags) > 0)
+	ok.True(t, len(diags) > 0)
 	for _, d := range diags {
-		be.Equal(t, d.Severity, protocol.DiagnosticSeverityWarning)
-		be.Equal(t, diagSource(d), "cells")
+		ok.Equal(t, d.Severity, protocol.DiagnosticSeverityWarning)
+		ok.Equal(t, diagSource(d), "cells")
 	}
 }
 
@@ -710,9 +716,9 @@ func TestDiagnosticsCapabilities(t *testing.T) {
 
 	var result protocol.InitializeResult
 	_, err := clientRPC.Call(t.Context(), "initialize", protocol.InitializeParams{}, &result)
-	be.Err(t, err, nil)
+	ok.MustNoError(t, err)
 
 	// Push diagnostics only — DiagnosticProvider is not advertised to avoid
 	// clients using both push and pull simultaneously.
-	be.True(t, result.Capabilities.DiagnosticProvider == nil)
+	ok.True(t, result.Capabilities.DiagnosticProvider == nil)
 }
