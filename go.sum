@@ -1,5 +1,7 @@
 cel.dev/cel-go v0.32.0 h1:irvpFKr5EuGPyxeME03ERh0rii1TX+BDAnB9eL3IvNk=
 cel.dev/cel-go v0.32.0/go.mod h1:DnVip7tpJSsgZymwfT+m1tnEVy3ivAjSMXPx12YrMkU=
+cel.dev/cel-go/ext/security v0.32.0 h1:Lf8SJ8Pe6YYNZ9CuUNOlVChbOgY0WwN4u/ftsq8e+Zo=
+cel.dev/cel-go/ext/security v0.32.0/go.mod h1:JxpAM6zJOqQQsG8FdcRybBhOl3yrfwLOVrRDlPhZlY8=
 cel.dev/expr v0.25.1 h1:1KrZg61W6TWSxuNZ37Xy49ps13NUovb66QLprthtwi4=
 cel.dev/expr v0.25.1/go.mod h1:hrXvqGP6G6gyx8UAHSHJ5RGk//1Oj5nXQ2NI02Nrsg4=
 github.com/BurntSushi/toml v1.6.0 h1:dRaEfpa2VI55EwlIW72hMRHdWouJeRF7TPYhI+AUQjk=

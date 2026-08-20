@@ -6,6 +6,7 @@ package lsp
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -31,8 +32,13 @@ func getVersion() string {
 
 // Serve starts the LSP server, communicating over stdin/stdout.
 // It blocks until the connection is closed.
-func Serve() error {
-	return ServeStream(context.Background(), stdinout{})
+//
+// defaultExtensions names CEL extension libraries (see extensionFactories) to
+// enable by default. A client that sends an "extensions" key in its
+// initialize request's initializationOptions overrides this default entirely
+// for the lifetime of the connection.
+func Serve(defaultExtensions ...string) error {
+	return ServeStream(context.Background(), stdinout{}, defaultExtensions...)
 }
 
 // stdinout wraps stdin/stdout into a ReadWriteCloser.
@@ -55,8 +61,8 @@ func (stdinout) Close() error {
 
 // ServeStream starts the LSP server over the given stream.
 // Exposed for testing.
-func ServeStream(ctx context.Context, rwc io.ReadWriteCloser) error {
-	s, err := newServer()
+func ServeStream(ctx context.Context, rwc io.ReadWriteCloser, defaultExtensions ...string) error {
+	s, err := newServer(defaultExtensions...)
 	if err != nil {
 		return err
 	}
@@ -122,15 +128,22 @@ func (lspCodec) Unmarshal(data []byte, v any) error {
 type server struct {
 	protocol.UnimplementedServer
 
-	mu     sync.Mutex
-	files  map[uri.URI]*file
+	mu    sync.Mutex
+	files map[uri.URI]*file
+
+	// celEnv is written once, by Initialize, and only read afterwards. It is
+	// deliberately not guarded by mu — none of its readers take the lock
+	// either. What makes that safe is ServeStream's synchronous dispatch:
+	// every handler runs on one goroutine in wire order, and the LSP spec
+	// puts initialize before any other request. Introducing an async handler
+	// would invalidate this.
 	celEnv *cel.Env
 
 	shutdown atomic.Bool // set by Shutdown; read by Exit to pick its process exit code
 }
 
-func newServer() (*server, error) {
-	celEnv, err := newCELEnv()
+func newServer(defaultExtensions ...string) (*server, error) {
+	celEnv, err := newCELEnvForExtensions(defaultExtensions)
 	if err != nil {
 		return nil, fmt.Errorf("failed to create CEL environment: %w", err)
 	}
@@ -140,7 +153,29 @@ func newServer() (*server, error) {
 	}, nil
 }
 
-func (s *server) Initialize(context.Context, *protocol.InitializeParams) (*protocol.InitializeResult, error) {
+// clientInitializationOptions is the shape cells reads out of the LSP
+// initialize request's initializationOptions. Unrecognized keys are ignored.
+type clientInitializationOptions struct {
+	// Extensions names CEL extension libraries to enable (see
+	// extensionFactories). When present, even as an empty list, it replaces
+	// whatever default extensions the server was started with.
+	Extensions []string `json:"extensions"`
+}
+
+func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
+	if params != nil && len(params.InitializationOptions) > 0 {
+		var opts clientInitializationOptions
+		if err := json.Unmarshal(params.InitializationOptions, &opts); err != nil {
+			return nil, fmt.Errorf("invalid initializationOptions: %w", err)
+		}
+		if opts.Extensions != nil {
+			celEnv, err := newCELEnvForExtensions(opts.Extensions)
+			if err != nil {
+				return nil, fmt.Errorf("invalid initializationOptions: %w", err)
+			}
+			s.celEnv = celEnv
+		}
+	}
 	return &protocol.InitializeResult{
 		Capabilities: protocol.ServerCapabilities{
 			TextDocumentSync: &protocol.TextDocumentSyncOptions{

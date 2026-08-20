@@ -4,6 +4,7 @@ go 1.27.0
 
 require (
 	cel.dev/cel-go v0.32.0
+	cel.dev/cel-go/ext/security v0.32.0
 	github.com/nalgeon/be v0.3.0
 	github.com/pressly/cli v0.7.0
 	go.lsp.dev/jsonrpc2 v1.0.1
@@ -22,6 +23,7 @@ require (
 	golang.org/x/exp/typeparams v0.0.0-20260209203927-2842357ff358 // indirect
 	golang.org/x/mod v0.36.0 // indirect
 	golang.org/x/sync v0.20.0 // indirect
+	golang.org/x/text v0.36.0 // indirect
 	golang.org/x/tools v0.45.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240826202546-f6391c0de4c7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240826202546-f6391c0de4c7 // indirect
