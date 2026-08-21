@@ -27,18 +27,19 @@ func (s *server) Formatting(_ context.Context, params *protocol.DocumentFormatti
 		return nil, nil
 	}
 
-	// Replace the entire document.
+	// Replace the entire document: an edit from the start of the file to the
+	// end of its last line.
 	lines := strings.Count(f.content, "\n")
-	lastNewline := strings.LastIndex(f.content, "\n")
-	lastLineLen := len(f.content) - lastNewline - 1
-	if lastNewline == -1 {
-		lastLineLen = len(f.content)
+	_, lastLine, found := strings.CutLast(f.content, "\n")
+	if !found {
+		// No newline at all, so the whole file is the last line.
+		lastLine = f.content
 	}
 
 	return []protocol.TextEdit{{
 		Range: protocol.Range{
 			Start: protocol.Position{Line: 0, Character: 0},
-			End:   protocol.Position{Line: uint32(lines), Character: uint32(lastLineLen)},
+			End:   protocol.Position{Line: uint32(lines), Character: uint32(len(lastLine))},
 		},
 		NewText: formatted,
 	}}, nil
