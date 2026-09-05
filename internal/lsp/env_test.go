@@ -446,3 +446,56 @@ func diagnosticMessage(d protocol.Diagnostic) string {
 	message, _ := d.Message.(protocol.String)
 	return string(message)
 }
+
+// Every request against a document whose configuration does not load must
+// still answer. Only diagnostics have anything to say in that case, but none
+// of the others may fall over.
+func TestServerRequestsWithBrokenConfig(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ok.MustNoError(t, os.WriteFile(filepath.Join(dir, lsp.ConfigFileName), []byte("name: [unterminated\n"), 0o600))
+	celPath := filepath.Join(dir, "a.cel")
+
+	conn := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{})
+	initializeServer(t, conn, "")
+
+	docURI := uri.File(celPath)
+	err := conn.Notify(t.Context(), "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI: docURI, LanguageID: "cel", Version: 1, Text: "x + x",
+		},
+	})
+	ok.MustNoError(t, err)
+
+	doc := protocol.TextDocumentIdentifier{URI: docURI}
+	pos := protocol.Position{Line: 0, Character: 0}
+	for _, tt := range []struct {
+		method string
+		params any
+	}{
+		{"textDocument/hover", protocol.HoverParams{TextDocument: doc, Position: pos}},
+		{"textDocument/completion", protocol.CompletionParams{TextDocument: doc, Position: pos}},
+		{"textDocument/formatting", protocol.DocumentFormattingParams{TextDocument: doc}},
+		{"textDocument/references", map[string]any{
+			"textDocument": map[string]any{"uri": docURI},
+			"position":     map[string]any{"line": 0, "character": 0},
+			"context":      map[string]any{"includeDeclaration": true},
+		}},
+		{"textDocument/documentHighlight", protocol.DocumentHighlightParams{TextDocument: doc, Position: pos}},
+		{"textDocument/rename", protocol.RenameParams{TextDocument: doc, Position: pos, NewName: "y"}},
+		{"textDocument/prepareRename", map[string]any{
+			"textDocument": map[string]any{"uri": docURI},
+			"position":     map[string]any{"line": 0, "character": 0},
+		}},
+		{"textDocument/signatureHelp", protocol.SignatureHelpParams{TextDocument: doc, Position: pos}},
+		{"textDocument/semanticTokens/full", protocol.SemanticTokensParams{TextDocument: doc}},
+		{"textDocument/inlayHint", protocol.InlayHintParams{TextDocument: doc}},
+	} {
+		t.Run(tt.method, func(t *testing.T) {
+			var result any
+			_, err := conn.Call(t.Context(), tt.method, tt.params, &result)
+			ok.NoError(t, err)
+		})
+	}
+}

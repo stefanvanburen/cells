@@ -9,6 +9,7 @@ import (
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common"
 	"cel.dev/cel-go/common/ast"
+	"cel.dev/cel-go/common/decls"
 	"cel.dev/cel-go/common/operators"
 	"cel.dev/cel-go/common/overloads"
 	"cel.dev/cel-go/common/types"
@@ -18,7 +19,7 @@ import (
 func (s *server) Hover(_ context.Context, params *protocol.HoverParams) (*protocol.Hover, error) {
 	f, docEnv := s.document(params.TextDocument.URI)
 
-	if f == nil || f.content == "" {
+	if f == nil || docEnv == nil || f.content == "" {
 		return nil, nil
 	}
 
@@ -60,6 +61,7 @@ func computeHover(f *file, celEnv *cel.Env, pos protocol.Position) (*protocol.Ho
 
 	walkCELExprForHover(nativeAST.Expr(), sourceInfo, f.content, celEnv, collectHover, nil)
 	collectMacroHovers(sourceInfo, f.content, celEnv, collectHover)
+	collectDeclaredHovers(f, celEnv, nativeAST, collectHover)
 
 	// Find the most specific (smallest) hover that contains the target offset.
 	var best *hoverInfo
@@ -89,6 +91,85 @@ func computeHover(f *file, celEnv *cel.Env, pos protocol.Position) (*protocol.Ho
 			End:   protocol.Position{Line: endLine, Character: endCol},
 		},
 	}, nil
+}
+
+// collectDeclaredHovers reports what the environment knows about the names in
+// a file: the type of a variable a configuration declared, and the type of a
+// field selected from one. Plain CEL declares no variables, so this finds
+// nothing until a configuration does.
+func collectDeclaredHovers(
+	f *file,
+	celEnv *cel.Env,
+	nativeAST *ast.AST,
+	collectHover func(byteStart, byteEnd int, markdown string),
+) {
+	variables := make(map[string]*decls.VariableDecl)
+	for _, variable := range celEnv.Variables() {
+		variables[variable.Name()] = variable
+	}
+
+	// Types come from the type-check, which an expression has to resolve for.
+	// Where it does not, a variable's declaration still gives its type; a
+	// field's type is only knowable from the check.
+	var typed *ast.AST
+	if checked, _ := f.check(celEnv); checked != nil {
+		typed = checked.NativeRep()
+	}
+	typeOf := func(id int64) *types.Type {
+		if typed == nil {
+			return nil
+		}
+		return typed.GetType(id)
+	}
+
+	sourceInfo := nativeAST.SourceInfo()
+	ast.PreOrderVisit(nativeAST.Expr(), ast.NewExprVisitor(func(e ast.Expr) {
+		offsetRange, hasOffset := sourceInfo.GetOffsetRange(e.ID())
+		if !hasOffset {
+			return
+		}
+		byteStart, byteStop := celOffsetRangeToByteRange(f.content, offsetRange)
+
+		switch e.Kind() {
+		case ast.IdentKind:
+			variable, declared := variables[e.AsIdent()]
+			if !declared {
+				return
+			}
+			// The checked type is preferred, since it accounts for a
+			// comprehension variable shadowing a declared name.
+			varType := typeOf(e.ID())
+			if varType == nil {
+				varType = variable.Type()
+			}
+			collectHover(byteStart, byteStop, declaredVariableHover(variable.Name(), varType, variable.Description()))
+
+		case ast.SelectKind:
+			fieldType := typeOf(e.ID())
+			if fieldType == nil {
+				return
+			}
+			// A select's own range covers the dot, not the field name after
+			// it, and the two need not be adjacent: "request . method" is one
+			// selection.
+			fieldName := e.AsSelect().FieldName()
+			start, end, found := findWord(f.content, fieldName, byteStop)
+			if !found {
+				return
+			}
+			collectHover(start, end, declaredVariableHover(fieldName, fieldType, ""))
+		}
+	}))
+}
+
+// declaredVariableHover renders a name, its type, and whatever the
+// configuration said about it.
+func declaredVariableHover(name string, t *types.Type, description string) string {
+	markdown := fmt.Sprintf("`%s`: `%s`", name, t)
+	if description != "" {
+		markdown += "\n\n" + description
+	}
+	return markdown
 }
 
 // walkCELExprForHover walks the CEL AST and collects hover info.

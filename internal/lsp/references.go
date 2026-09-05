@@ -10,7 +10,7 @@ import (
 func (s *server) References(_ context.Context, params *protocol.ReferenceParams) ([]protocol.Location, error) {
 	f, docEnv := s.document(params.TextDocument.URI)
 
-	if f == nil || f.content == "" {
+	if f == nil || docEnv == nil || f.content == "" {
 		return nil, nil
 	}
 

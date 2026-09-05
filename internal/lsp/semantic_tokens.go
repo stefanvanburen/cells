@@ -16,7 +16,7 @@ import (
 func (s *server) SemanticTokensFull(_ context.Context, params *protocol.SemanticTokensParams) (*protocol.SemanticTokens, error) {
 	f, docEnv := s.document(params.TextDocument.URI)
 
-	if f == nil {
+	if f == nil || docEnv == nil {
 		return nil, nil
 	}
 	return computeSemanticTokens(f, docEnv.celEnv)

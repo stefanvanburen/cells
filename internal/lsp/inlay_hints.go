@@ -18,7 +18,7 @@ var paddingLeft = true
 func (s *server) InlayHint(_ context.Context, params *protocol.InlayHintParams) ([]protocol.InlayHint, error) {
 	f, docEnv := s.document(params.TextDocument.URI)
 
-	if f == nil || f.content == "" {
+	if f == nil || docEnv == nil || f.content == "" {
 		return []protocol.InlayHint{}, nil
 	}
 

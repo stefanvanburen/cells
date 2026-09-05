@@ -13,7 +13,7 @@ import (
 func (s *server) SignatureHelp(_ context.Context, params *protocol.SignatureHelpParams) (*protocol.SignatureHelp, error) {
 	f, docEnv := s.document(params.TextDocument.URI)
 
-	if f == nil || f.content == "" {
+	if f == nil || docEnv == nil || f.content == "" {
 		return nil, nil
 	}
 

@@ -6,6 +6,9 @@ import (
 	"strings"
 	"testing"
 
+	"go.lsp.dev/jsonrpc2"
+	"go.lsp.dev/protocol"
+	"go.lsp.dev/uri"
 	"go.vanburen.xyz/cells/internal/lsp"
 	"go.vanburen.xyz/ok"
 	"google.golang.org/protobuf/proto"
@@ -174,4 +177,150 @@ func TestDescriptorSetErrors(t *testing.T) {
 		}
 		ok.True(t, strings.Contains(err.Error(), path), ok.Sprintf("error: %v", err))
 	})
+}
+
+// Declared names are what hover and completion had nothing to say about
+// before a configuration existed.
+func TestDeclarationsDriveHoverAndCompletion(t *testing.T) {
+	t.Parallel()
+
+	opts := loadOptions(t, `
+name: test
+variables:
+  - name: request
+    type_name: "cells.test.Request"
+    description: The request being authorized.
+`)
+	opts.DescriptorSets = []string{writeDescriptorSet(t)}
+
+	t.Run("hover_on_variable", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := lsp.Hover(`request.method == "POST"`, 1, 1, opts)
+		ok.MustNoError(t, err)
+		ok.True(t, strings.Contains(got, "cells.test.Request"), ok.Sprintf("hover: %q", got))
+		// The configuration's own description comes along.
+		ok.True(t, strings.Contains(got, "The request being authorized."), ok.Sprintf("hover: %q", got))
+	})
+
+	t.Run("hover_on_field", func(t *testing.T) {
+		t.Parallel()
+
+		// Column 9 is the "m" of method.
+		got, err := lsp.Hover(`request.method == "POST"`, 1, 9, opts)
+		ok.MustNoError(t, err)
+		ok.True(t, strings.Contains(got, "`method`"), ok.Sprintf("hover: %q", got))
+		ok.True(t, strings.Contains(got, "string"), ok.Sprintf("hover: %q", got))
+	})
+
+	t.Run("hover_on_nested_field", func(t *testing.T) {
+		t.Parallel()
+
+		// Column 16 is the "n" of name in request.nested.name.
+		got, err := lsp.Hover(`request.nested.name == "x"`, 1, 16, opts)
+		ok.MustNoError(t, err)
+		ok.True(t, strings.Contains(got, "`name`"), ok.Sprintf("hover: %q", got))
+		ok.True(t, strings.Contains(got, "string"), ok.Sprintf("hover: %q", got))
+	})
+
+	t.Run("no_hover_without_declarations", func(t *testing.T) {
+		t.Parallel()
+
+		// The same expression against plain CEL: nothing is declared, so
+		// there is nothing to say about the name.
+		got, err := lsp.Hover(`request.method == "POST"`, 1, 1, lsp.Options{})
+		ok.MustNoError(t, err)
+		ok.Equal(t, got, "")
+	})
+}
+
+// Completion offers the declared names, which is the other thing that was
+// impossible before there was a configuration.
+func TestDeclarationsDriveCompletionItems(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	descriptors := writeDescriptorSet(t)
+	ok.MustNoError(t, os.WriteFile(filepath.Join(dir, lsp.ConfigFileName), []byte(`
+name: test
+variables:
+  - name: request
+    type_name: "cells.test.Request"
+  - name: retries
+    type: "int"
+`), 0o600))
+
+	conn := newLSPClient(t, protocol.UnimplementedClient{},
+		lsp.Options{DescriptorSets: []string{descriptors}})
+	initializeServer(t, conn, "")
+
+	t.Run("variables", func(t *testing.T) {
+		celPath := filepath.Join(dir, "vars.cel")
+		openDocument(t, conn, celPath, "")
+
+		items := completionAt(t, conn, celPath, protocol.Position{Line: 0, Character: 0})
+		ok.True(t, hasLabel(items, "request"), ok.Sprintf("labels: %v", labelsOf(items)))
+		ok.True(t, hasLabel(items, "retries"), ok.Sprintf("labels: %v", labelsOf(items)))
+	})
+
+	t.Run("message_fields_after_dot", func(t *testing.T) {
+		celPath := filepath.Join(dir, "fields.cel")
+		openDocument(t, conn, celPath, "request.")
+
+		items := completionAt(t, conn, celPath, protocol.Position{Line: 0, Character: 8})
+		// A message has fields and no member functions of its own, so its
+		// fields are the whole of what can follow the dot.
+		ok.DeepEqual(t, labelsOf(items), []string{"method", "nested", "retries", "tags"})
+	})
+
+	t.Run("no_fields_on_a_scalar", func(t *testing.T) {
+		celPath := filepath.Join(dir, "scalar.cel")
+		openDocument(t, conn, celPath, "retries.")
+
+		// An int has no fields of its own, so a message's field names must not
+		// leak into what follows its dot.
+		items := completionAt(t, conn, celPath, protocol.Position{Line: 0, Character: 8})
+		ok.True(t, !hasLabel(items, "method"), ok.Sprintf("labels: %v", labelsOf(items)))
+		ok.True(t, !hasLabel(items, "tags"), ok.Sprintf("labels: %v", labelsOf(items)))
+	})
+}
+
+// openDocument opens a document at path holding content.
+func openDocument(t *testing.T, conn jsonrpc2.Conn, path, content string) {
+	t.Helper()
+	err := conn.Notify(t.Context(), "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI: uri.File(path), LanguageID: "cel", Version: 1, Text: content,
+		},
+	})
+	ok.MustNoError(t, err)
+}
+
+// completionAt returns the completion items offered at a position.
+func completionAt(t *testing.T, conn jsonrpc2.Conn, path string, pos protocol.Position) []protocol.CompletionItem {
+	t.Helper()
+	var result protocol.CompletionList
+	_, err := conn.Call(t.Context(), "textDocument/completion", protocol.CompletionParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(path)},
+		Position:     pos,
+	}, &result)
+	ok.MustNoError(t, err)
+	return result.Items
+}
+
+func hasLabel(items []protocol.CompletionItem, label string) bool {
+	for _, item := range items {
+		if item.Label == label {
+			return true
+		}
+	}
+	return false
+}
+
+func labelsOf(items []protocol.CompletionItem) []string {
+	labels := make([]string, 0, len(items))
+	for _, item := range items {
+		labels = append(labels, item.Label)
+	}
+	return labels
 }

@@ -14,9 +14,9 @@ $ go install go.vanburen.xyz/cells/cmd/cells@latest
 * Semantic highlighting
 * Diagnostics
 * Formatting
-* Hover
+* Hover (including declared variable and message field types)
 * References
-* Completion
+* Completion (including declared variables and message fields)
 * Signature help
 * Variable renaming
 * Inlay hints (expression evaluation)
@@ -168,6 +168,17 @@ Field access is then checked against the message:
 $ echo 'request.nosuchfield == 1' > bad.cel
 $ cells check --descriptor-set=descriptors.binpb --config=cel.yaml bad.cel
 bad.cel:1:8: error: undefined field 'nosuchfield'
+```
+
+Hover reports a declared variable's type and whatever `description` the
+configuration gave it, and completion offers the declared names — after a dot
+on a message-typed value, its fields:
+
+```console
+$ cells hover --descriptor-set=descriptors.binpb --config=cel.yaml policy.cel:1:1
+`request`: `my.service.Request`
+
+The request being authorized.
 ```
 
 `context_variable` declares every field of a message as a top-level name

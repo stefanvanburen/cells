@@ -20,11 +20,17 @@ var celKeywords = []string{"true", "false", "null"}
 
 func (s *server) Completion(_ context.Context, params *protocol.CompletionParams) (protocol.CompletionResult, error) {
 	f, docEnv := s.document(params.TextDocument.URI)
+	if docEnv == nil {
+		// The configuration covering this document does not load, so there is
+		// no environment to complete against. Diagnostics report why.
+		return &protocol.CompletionList{}, nil
+	}
 
 	// Dot context: member completions filtered by receiver type.
 	if f != nil && isDotContext(f.content, params.Position) {
 		receiverType := receiverTypeAtDot(f.content, params.Position, docEnv.celEnv)
-		items := memberCompletionItems(docEnv.celEnv, receiverType)
+		items := fieldCompletionItems(docEnv.celEnv, receiverType)
+		items = append(items, memberCompletionItems(docEnv.celEnv, receiverType)...)
 		return &protocol.CompletionList{
 			IsIncomplete: false,
 			Items:        items,
@@ -38,6 +44,7 @@ func (s *server) Completion(_ context.Context, params *protocol.CompletionParams
 	}
 
 	var items []protocol.CompletionItem
+	items = append(items, variableCompletionItems(docEnv.celEnv, expectedType)...)
 	items = append(items, globalCompletionItems(docEnv.celEnv, expectedType)...)
 	items = append(items, macroCompletionItems(docEnv.celEnv, expectedType)...)
 	items = append(items, keywordCompletionItems(docEnv.celEnv, expectedType)...)
@@ -236,6 +243,59 @@ func memberCompletionItems(celEnv *cel.Env, receiverType *types.Type) []protocol
 // globalCompletionItems returns completion items for global functions and type
 // conversions. If expectedType is non-nil, only functions that can return a
 // compatible type are included.
+// variableCompletionItems offers the variables the environment declares. There
+// are none until a configuration declares some, which is why plain CEL offers
+// only functions and macros.
+func variableCompletionItems(celEnv *cel.Env, expectedType *types.Type) []protocol.CompletionItem {
+	var items []protocol.CompletionItem
+	for _, variable := range celEnv.Variables() {
+		if !typeMatches(expectedType, variable.Type()) {
+			continue
+		}
+		items = append(items, protocol.CompletionItem{
+			Label:         variable.Name(),
+			Kind:          protocol.CompletionItemKindVariable,
+			Detail:        protocol.NewOptional(variable.Type().String()),
+			Documentation: docString(variable.Description()),
+		})
+	}
+	slices.SortFunc(items, func(a, b protocol.CompletionItem) int {
+		return cmp.Compare(a.Label, b.Label)
+	})
+	return items
+}
+
+// fieldCompletionItems offers the fields of a message-typed receiver, so that
+// completing after the dot in request. lists what the message actually holds.
+// Anything else — a map, a list, a scalar — has no fields to offer.
+func fieldCompletionItems(celEnv *cel.Env, receiverType *types.Type) []protocol.CompletionItem {
+	if receiverType == nil || receiverType.Kind() != types.StructKind {
+		return nil
+	}
+	typeName := receiverType.TypeName()
+	provider := celEnv.CELTypeProvider()
+	fieldNames, found := provider.FindStructFieldNames(typeName)
+	if !found {
+		return nil
+	}
+
+	items := make([]protocol.CompletionItem, 0, len(fieldNames))
+	for _, name := range fieldNames {
+		item := protocol.CompletionItem{
+			Label: name,
+			Kind:  protocol.CompletionItemKindField,
+		}
+		if fieldType, ok := provider.FindStructFieldType(typeName, name); ok {
+			item.Detail = protocol.NewOptional(fieldType.Type.String())
+		}
+		items = append(items, item)
+	}
+	slices.SortFunc(items, func(a, b protocol.CompletionItem) int {
+		return cmp.Compare(a.Label, b.Label)
+	})
+	return items
+}
+
 func globalCompletionItems(celEnv *cel.Env, expectedType *types.Type) []protocol.CompletionItem {
 	var items []protocol.CompletionItem
 	for name, fn := range celEnv.Functions() {

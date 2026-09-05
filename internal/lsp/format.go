@@ -11,7 +11,7 @@ import (
 func (s *server) Formatting(_ context.Context, params *protocol.DocumentFormattingParams) ([]protocol.TextEdit, error) {
 	f, docEnv := s.document(params.TextDocument.URI)
 
-	if f == nil {
+	if f == nil || docEnv == nil {
 		return nil, nil
 	}
 

@@ -42,7 +42,7 @@ func (loopVarScope) isScope() {}
 func (s *server) Rename(_ context.Context, params *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
 	f, docEnv := s.document(params.TextDocument.URI)
 
-	if f == nil || f.content == "" {
+	if f == nil || docEnv == nil || f.content == "" {
 		return nil, nil
 	}
 
@@ -52,7 +52,7 @@ func (s *server) Rename(_ context.Context, params *protocol.RenameParams) (*prot
 func (s *server) PrepareRename(_ context.Context, params *protocol.PrepareRenameParams) (protocol.PrepareRenameResult, error) {
 	f, docEnv := s.document(params.TextDocument.URI)
 
-	if f == nil || f.content == "" {
+	if f == nil || docEnv == nil || f.content == "" {
 		return nil, nil
 	}
 
