@@ -236,6 +236,7 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 			SignatureHelpProvider: &protocol.SignatureHelpOptions{
 				TriggerCharacters: []string{"(", ","},
 			},
+			DefinitionProvider:        protocol.Boolean(true),
 			RenameProvider:            protocol.Boolean(true),
 			ReferencesProvider:        protocol.Boolean(true),
 			DocumentHighlightProvider: protocol.Boolean(true),

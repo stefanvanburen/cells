@@ -119,6 +119,21 @@ func findIdentifierAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, fileCon
 			return
 		}
 		byteStart, byteStop := celOffsetRangeToByteRange(fileContent, offsetRange)
+
+		// The parser records a call's location as its opening parenthesis, so
+		// the name being called lies before the range rather than inside it
+		// and has to be tested separately. Operators are spelled by their
+		// symbol, which the range does cover.
+		if e.Kind() == ast.CallKind {
+			funcName := e.AsCall().FunctionName()
+			if _, isOperator := celOperatorSymbol(funcName); !isOperator {
+				if start, end, found := callNameRange(fileContent, funcName, byteStart); found &&
+					targetOffset >= start && targetOffset < end {
+					add(funcName, e.ID(), identifierKindFunction)
+				}
+			}
+		}
+
 		// A macro that the parser expanded into a comprehension can be left
 		// with an empty range. Its loop variable is still findable in the
 		// source, so don't rule the node out on the range alone.
@@ -136,11 +151,6 @@ func findIdentifierAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, fileCon
 		case ast.CallKind:
 			call := e.AsCall()
 			funcName := call.FunctionName()
-			if start, end, found := findWord(fileContent, funcName, byteStart); found && end <= byteStop {
-				if targetOffset >= start && targetOffset < end {
-					add(funcName, e.ID(), identifierKindFunction)
-				}
-			}
 
 			// A macro still in call form declares its loop variable as the
 			// first argument, e.g. the "x" in list.map(x, x * 2).
@@ -161,8 +171,17 @@ func findIdentifierAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, fileCon
 			}
 
 		case ast.ComprehensionKind:
-			// An expanded macro keeps its loop variable's name but not its
-			// source range, so look the name up in the source instead.
+			// An expanded macro keeps the name it binds but not where it was
+			// written. The call the macro was written as holds the
+			// declaration, with its own range; failing that, the name has to
+			// be found in the source.
+			if name, declID, ok := macroDeclaration(sourceInfo, e.ID()); ok {
+				start, end, hasRange := exprByteRange(fileContent, sourceInfo, declID)
+				if hasRange && targetOffset >= start && targetOffset < end {
+					add(name, e.ID(), identifierKindTopLevel)
+				}
+				return
+			}
 			loopVar := e.AsComprehension().IterVar()
 			if start, end, found := findWord(fileContent, loopVar, byteStart); found {
 				if targetOffset >= start && targetOffset < end {
@@ -182,7 +201,7 @@ func findIdentifierAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, fileCon
 	// Re-point it at that comprehension so its scope comes out right.
 	if best.kind == identifierKindTopLevel && !strings.Contains(fileContent, "."+best.name) {
 		ast.PreOrderVisit(expr, ast.NewExprVisitor(func(e ast.Expr) {
-			if e.Kind() != ast.ComprehensionKind || e.AsComprehension().IterVar() != best.name {
+			if !comprehensionBinds(sourceInfo, e, best.name) {
 				return
 			}
 			offsetRange, hasOffset := sourceInfo.GetOffsetRange(e.ID())
@@ -207,9 +226,34 @@ func findIdentifierAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, fileCon
 	return best
 }
 
+// callNameRange returns the byte range of the name of a called function, which
+// the parser does not record: it sits before the parenthesis that a call's
+// location points at, with whitespace allowed between the two.
+func callNameRange(content string, funcName string, parenOffset int) (start, end int, found bool) {
+	end = min(parenOffset, len(content))
+	for end > 0 && isSpaceByte(content[end-1]) {
+		end--
+	}
+	start = end - len(funcName)
+	if start < 0 || content[start:end] != funcName {
+		return 0, 0, false
+	}
+	// The name must not be the tail of a longer one.
+	if start > 0 && isIdentifierChar(rune(content[start-1])) {
+		return 0, 0, false
+	}
+	return start, end, true
+}
+
+// isSpaceByte reports whether b is one of the whitespace bytes CEL allows
+// between tokens. Every one of them is ASCII, so a byte is enough.
+func isSpaceByte(b byte) bool {
+	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
+}
+
 // determineIdentifierScope figures out whether an identifier is top-level or a loop variable.
-func determineIdentifierScope(exprID int64, identName string, expr ast.Expr) scope {
-	if s := findLoopVarScope(exprID, identName, expr); s != nil {
+func determineIdentifierScope(exprID int64, identName string, expr ast.Expr, sourceInfo *ast.SourceInfo) scope {
+	if s := findLoopVarScope(exprID, identName, expr, sourceInfo); s != nil {
 		return *s
 	}
 	return topLevelScope{}
@@ -218,7 +262,7 @@ func determineIdentifierScope(exprID int64, identName string, expr ast.Expr) sco
 // findLoopVarScope reports the comprehension that binds identName as its loop
 // variable, when the identifier at exprID is that variable or one of its uses.
 // It returns nil when identName is not a loop variable.
-func findLoopVarScope(exprID int64, identName string, expr ast.Expr) *loopVarScope {
+func findLoopVarScope(exprID int64, identName string, expr ast.Expr, sourceInfo *ast.SourceInfo) *loopVarScope {
 	var result *loopVarScope
 	ast.PreOrderVisit(expr, ast.NewExprVisitor(func(e ast.Expr) {
 		if result != nil {
@@ -226,12 +270,11 @@ func findLoopVarScope(exprID int64, identName string, expr ast.Expr) *loopVarSco
 		}
 		switch e.Kind() {
 		case ast.ComprehensionKind:
-			// An expanded macro holds its loop variable as a name, not an
+			// An expanded macro holds the name it binds as a name, not an
 			// expression, so the identifier was attributed to the
-			// comprehension itself. The macro it came from is no longer
-			// recoverable from the AST.
-			if e.AsComprehension().IterVar() == identName && exprID == e.ID() {
-				result = &loopVarScope{comprehensionID: e.ID(), macroName: "unknown"}
+			// comprehension itself.
+			if exprID == e.ID() && comprehensionBinds(sourceInfo, e, identName) {
+				result = &loopVarScope{comprehensionID: e.ID(), macroName: macroName(sourceInfo, e.ID())}
 			}
 
 		case ast.CallKind:

@@ -17,15 +17,83 @@ func lspRange(content string, byteStart, byteEnd int) protocol.Range {
 }
 
 // rangeOfExpr returns the LSP range covering the source text of the expression
-// with the given ID. It reports false when the parser recorded no source range
-// for that ID, which happens for expressions synthesized by macro expansion.
+// with the given ID. It reports false when there is no such text: the parser
+// records no range at all for some expressions macro expansion synthesizes,
+// and an empty one for others, and neither stands for anything a user wrote.
 func rangeOfExpr(content string, sourceInfo *ast.SourceInfo, id int64) (protocol.Range, bool) {
-	offsetRange, ok := sourceInfo.GetOffsetRange(id)
+	byteStart, byteEnd, ok := exprByteRange(content, sourceInfo, id)
 	if !ok {
 		return protocol.Range{}, false
 	}
-	byteStart, byteEnd := celOffsetRangeToByteRange(content, offsetRange)
 	return lspRange(content, byteStart, byteEnd), true
+}
+
+// exprByteRange returns the byte range of an expression's source text, and
+// whether it has any.
+func exprByteRange(content string, sourceInfo *ast.SourceInfo, id int64) (byteStart, byteEnd int, ok bool) {
+	offsetRange, hasRange := sourceInfo.GetOffsetRange(id)
+	if !hasRange {
+		return 0, 0, false
+	}
+	byteStart, byteEnd = celOffsetRangeToByteRange(content, offsetRange)
+	if byteEnd <= byteStart {
+		return 0, 0, false
+	}
+	return byteStart, byteEnd, true
+}
+
+// macroDeclarationRange returns the range of the name a macro binds.
+//
+// Expanding a macro drops the declaration: [1, 2].map(x, ...) becomes a
+// comprehension that knows the name x but holds no expression for where it was
+// written. What the parser keeps is the call the macro was written as, whose
+// first argument is that declaration, with its own source range.
+func macroDeclaration(sourceInfo *ast.SourceInfo, macroID int64) (name string, declID int64, ok bool) {
+	call, retained := sourceInfo.GetMacroCall(macroID)
+	if !retained || call.Kind() != ast.CallKind {
+		return "", 0, false
+	}
+	args := call.AsCall().Args()
+	if len(args) == 0 || args[0].Kind() != ast.IdentKind {
+		return "", 0, false
+	}
+	return args[0].AsIdent(), args[0].ID(), true
+}
+
+// macroDeclarationRange returns the range of the declaration of identName in
+// the macro with the given ID.
+func macroDeclarationRange(sourceInfo *ast.SourceInfo, content string, macroID int64, identName string) (protocol.Range, bool) {
+	name, declID, ok := macroDeclaration(sourceInfo, macroID)
+	if !ok || name != identName {
+		return protocol.Range{}, false
+	}
+	return rangeOfExpr(content, sourceInfo, declID)
+}
+
+// comprehensionBinds reports whether an expanded macro binds identName.
+//
+// A comprehension names its iteration variable directly, but cel.bind does not
+// — it binds through the accumulator and leaves IterVar as a placeholder — so
+// the call the macro was written as has the last word.
+func comprehensionBinds(sourceInfo *ast.SourceInfo, expr ast.Expr, identName string) bool {
+	if expr.Kind() != ast.ComprehensionKind {
+		return false
+	}
+	if expr.AsComprehension().IterVar() == identName {
+		return true
+	}
+	name, _, ok := macroDeclaration(sourceInfo, expr.ID())
+	return ok && name == identName
+}
+
+// macroName returns the name of the macro an expanded comprehension came from,
+// or "" when the parser did not retain the call.
+func macroName(sourceInfo *ast.SourceInfo, macroID int64) string {
+	call, ok := sourceInfo.GetMacroCall(macroID)
+	if !ok || call.Kind() != ast.CallKind {
+		return ""
+	}
+	return call.AsCall().FunctionName()
 }
 
 // findExprByID returns the expression with the given ID, or nil if the subtree
@@ -113,11 +181,14 @@ func comprehensionOccurrences(expr ast.Expr, sourceInfo *ast.SourceInfo, content
 	comp := expr.AsComprehension()
 
 	var ranges []protocol.Range
-	// Macro expansion drops the iteration variable's declaration: it is named
-	// by IterVar() but has no expression, and so no source range, of its own.
-	// Recover it from the source text, where it is the first word-delimited
-	// occurrence of the name after the range being iterated over.
-	if comp.IterVar() == identName {
+	// The declaration, which the expansion dropped.
+	if decl, ok := macroDeclarationRange(sourceInfo, content, expr.ID(), identName); ok {
+		ranges = append(ranges, decl)
+	} else if comp.IterVar() == identName {
+		// No call was retained — macro call tracking can be off in an
+		// environment cells did not build. Fall back to the source text, where
+		// the declaration is the first word-delimited occurrence of the name
+		// after the range being iterated over.
 		var searchFrom int
 		if iterRange, ok := sourceInfo.GetOffsetRange(comp.IterRange().ID()); ok {
 			_, searchFrom = celOffsetRangeToByteRange(content, iterRange)

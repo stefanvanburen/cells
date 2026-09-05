@@ -45,6 +45,7 @@ func rootCommand() *cli.Command {
 			checkCommand(),
 			hoverCommand(),
 			referencesCommand(),
+			definitionCommand(),
 			renameCommand(),
 		},
 	}
@@ -293,6 +294,40 @@ func referencesCommand() *cli.Command {
 			for _, ref := range refs {
 				fmt.Fprintf(s.Stdout, "%s:%d:%d\n", filename, ref.Line, ref.Col)
 			}
+			return nil
+		},
+	}
+}
+
+func definitionCommand() *cli.Command {
+	return &cli.Command{
+		Name:    "definition",
+		Summary: "Show where the name at the given position was declared",
+		Usage:   "cells definition <file>:<line>:<col>",
+		Exec: func(_ context.Context, s *cli.State) error {
+			opts, err := options(s)
+			if err != nil {
+				return err
+			}
+			if len(s.Args) != 1 {
+				return fmt.Errorf("definition: expected one argument of the form file:line:col")
+			}
+			filename, line, col, err := parsePosition(s.Args[0])
+			if err != nil {
+				return err
+			}
+			content, err := os.ReadFile(filename)
+			if err != nil {
+				return fmt.Errorf("reading %s: %w", filename, err)
+			}
+			definition, found, err := lsp.FindDefinition(filename, string(content), line, col, optionsFor(opts, filename))
+			if err != nil {
+				return fmt.Errorf("definition: %w", err)
+			}
+			if !found {
+				return nil
+			}
+			fmt.Fprintf(s.Stdout, "%s:%d:%d\n", definition.Path, definition.Line, definition.Col)
 			return nil
 		},
 	}

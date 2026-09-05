@@ -132,6 +132,6 @@ func (f *file) identifierOccurrencesAt(celEnv *cel.Env, pos protocol.Position) (
 	if info == nil {
 		return nil, nil
 	}
-	s := determineIdentifierScope(info.exprID, info.name, nativeAST.Expr())
+	s := determineIdentifierScope(info.exprID, info.name, nativeAST.Expr(), nativeAST.SourceInfo())
 	return info, identifierOccurrences(nativeAST.Expr(), nativeAST.SourceInfo(), f.content, s, info.name)
 }

@@ -4,6 +4,7 @@ import (
 	"slices"
 
 	"go.lsp.dev/protocol"
+	lspuri "go.lsp.dev/uri"
 )
 
 // ExtensionNames returns the names of the CEL extension libraries that can be
@@ -128,6 +129,45 @@ func References(content string, line, col int, opts Options) ([]Reference, error
 		})
 	}
 	return refs, nil
+}
+
+// Definition is where a name was declared: a location in a named file
+// (1-indexed, UTF-8 byte columns).
+type Definition struct {
+	Path    string
+	Line    int
+	Col     int
+	EndLine int
+	EndCol  int
+}
+
+// FindDefinition returns where the name at the given 1-indexed line:col was
+// declared: its entry in the configuration opts name, or, for a name a macro
+// binds, where the macro binds it in path itself. It reports false when there
+// is no such name, or nothing that declared it.
+//
+// Unlike the other entry points this one takes the file's path, because its
+// result names a file.
+func FindDefinition(path, content string, line, col int, opts Options) (Definition, bool, error) {
+	env, err := newCELEnv(opts)
+	if err != nil {
+		return Definition{}, false, err
+	}
+	f := &file{uri: lspuri.File(path), content: content}
+	location, found := computeDefinition(f, env, opts.ConfigPath, protocol.Position{
+		Line:      uint32(line - 1),
+		Character: uint32(col - 1),
+	})
+	if !found {
+		return Definition{}, false, nil
+	}
+	return Definition{
+		Path:    location.URI.FsPath(),
+		Line:    int(location.Range.Start.Line) + 1,
+		Col:     int(location.Range.Start.Character) + 1,
+		EndLine: int(location.Range.End.Line) + 1,
+		EndCol:  int(location.Range.End.Character) + 1,
+	}, true, nil
 }
 
 // Rename renames the identifier at the given 1-indexed line:col to newName.

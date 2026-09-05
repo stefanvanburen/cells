@@ -10,6 +10,7 @@ require (
 	go.lsp.dev/protocol v1.0.1
 	go.lsp.dev/uri v1.0.1
 	go.vanburen.xyz/ok v0.4.0
+	go.yaml.in/yaml/v3 v3.0.4
 	google.golang.org/protobuf v1.36.10
 	znkr.io/diff v1.0.1
 )
@@ -21,7 +22,6 @@ require (
 	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
 	github.com/stefanvanburen/colorcmp v0.3.0 // indirect
-	go.yaml.in/yaml/v3 v3.0.4 // indirect
 	golang.org/x/exp v0.0.0-20240823005443-9b4947da3948 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20260209203927-2842357ff358 // indirect
 	golang.org/x/mod v0.36.0 // indirect

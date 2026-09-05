@@ -16,6 +16,7 @@ $ go install go.vanburen.xyz/cells/cmd/cells@latest
 * Formatting
 * Hover (including declared variable and message field types)
 * References
+* Go to definition
 * Completion (including declared variables and message fields)
 * Signature help
 * Variable renaming
@@ -70,6 +71,21 @@ Each reference is printed as `file:line:col`.
 ```console
 $ cells references file.cel:1:1
 ```
+
+### `cells definition`
+
+Show where the name at a given position was declared.
+
+```console
+$ cells definition file.cel:1:1
+cel.yaml:5:11
+```
+
+CEL has nothing to import, and every standard-library and extension function is
+defined in Go, so the names with a definition to point at are the ones
+[a configuration](#environment) declared — its `variables` and `functions`
+entries — and the ones a macro binds, such as the `x` in `list.map(x, x * 2)`
+or the `v` in `cel.bind(v, ..., ...)`, which resolve within the file itself.
 
 ### `cells rename`
 
