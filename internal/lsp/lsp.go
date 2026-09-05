@@ -33,12 +33,11 @@ func getVersion() string {
 // Serve starts the LSP server, communicating over stdin/stdout.
 // It blocks until the connection is closed.
 //
-// defaultExtensions names CEL extension libraries (see extensionFactories) to
-// enable by default. A client that sends an "extensions" key in its
-// initialize request's initializationOptions overrides this default entirely
-// for the lifetime of the connection.
-func Serve(defaultExtensions ...string) error {
-	return ServeStream(context.Background(), stdinout{}, defaultExtensions...)
+// opts describe the environment to start with. A client that sends the
+// corresponding key in its initialize request's initializationOptions
+// overrides that part of it for the lifetime of the connection.
+func Serve(opts Options) error {
+	return ServeStream(context.Background(), stdinout{}, opts)
 }
 
 // stdinout wraps stdin/stdout into a ReadWriteCloser.
@@ -61,8 +60,8 @@ func (stdinout) Close() error {
 
 // ServeStream starts the LSP server over the given stream.
 // Exposed for testing.
-func ServeStream(ctx context.Context, rwc io.ReadWriteCloser, defaultExtensions ...string) error {
-	s, err := newServer(defaultExtensions...)
+func ServeStream(ctx context.Context, rwc io.ReadWriteCloser, opts Options) error {
+	s, err := newServer(opts)
 	if err != nil {
 		return err
 	}
@@ -131,26 +130,39 @@ type server struct {
 	mu    sync.Mutex
 	files map[uri.URI]*file
 
-	// celEnv is written once, by Initialize, and only read afterwards. It is
-	// deliberately not guarded by mu — none of its readers take the lock
-	// either. What makes that safe is ServeStream's synchronous dispatch:
-	// every handler runs on one goroutine in wire order, and the LSP spec
-	// puts initialize before any other request. Introducing an async handler
-	// would invalidate this.
-	celEnv *cel.Env
+	// celEnv and checkSeverity are written once, by Initialize, and only read
+	// afterwards. They are deliberately not guarded by mu — none of their
+	// readers take the lock either. What makes that safe is ServeStream's
+	// synchronous dispatch: every handler runs on one goroutine in wire order,
+	// and the LSP spec puts initialize before any other request. Introducing
+	// an async handler would invalidate this.
+	celEnv        *cel.Env
+	checkSeverity protocol.DiagnosticSeverity
+
+	// startOpts are the options the server was started with, which
+	// initializationOptions overrides key by key.
+	startOpts Options
 
 	shutdown atomic.Bool // set by Shutdown; read by Exit to pick its process exit code
 }
 
-func newServer(defaultExtensions ...string) (*server, error) {
-	celEnv, err := newCELEnvForExtensions(defaultExtensions)
-	if err != nil {
-		return nil, fmt.Errorf("failed to create CEL environment: %w", err)
+func newServer(opts Options) (*server, error) {
+	s := &server{files: make(map[uri.URI]*file), startOpts: opts}
+	if err := s.setEnv(opts); err != nil {
+		return nil, err
 	}
-	return &server{
-		files:  make(map[uri.URI]*file),
-		celEnv: celEnv,
-	}, nil
+	return s, nil
+}
+
+// setEnv installs the CEL environment described by opts.
+func (s *server) setEnv(opts Options) error {
+	celEnv, err := newCELEnv(opts)
+	if err != nil {
+		return fmt.Errorf("failed to create CEL environment: %w", err)
+	}
+	s.celEnv = celEnv
+	s.checkSeverity = checkSeverity(opts)
+	return nil
 }
 
 // clientInitializationOptions is the shape cells reads out of the LSP
@@ -160,20 +172,18 @@ type clientInitializationOptions struct {
 	// extensionFactories). When present, even as an empty list, it replaces
 	// whatever default extensions the server was started with.
 	Extensions []string `json:"extensions"`
+
+	// Config is the path to a CEL environment configuration file, declaring
+	// the variables and types expressions may refer to. When present it
+	// replaces whatever configuration the server was started with; an empty
+	// string clears it.
+	Config *string `json:"config"`
 }
 
 func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
 	if params != nil && len(params.InitializationOptions) > 0 {
-		var opts clientInitializationOptions
-		if err := json.Unmarshal(params.InitializationOptions, &opts); err != nil {
+		if err := s.applyInitializationOptions(params.InitializationOptions); err != nil {
 			return nil, fmt.Errorf("invalid initializationOptions: %w", err)
-		}
-		if opts.Extensions != nil {
-			celEnv, err := newCELEnvForExtensions(opts.Extensions)
-			if err != nil {
-				return nil, fmt.Errorf("invalid initializationOptions: %w", err)
-			}
-			s.celEnv = celEnv
 		}
 	}
 	return &protocol.InitializeResult{
@@ -207,6 +217,35 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 			Version: protocol.NewOptional(getVersion()),
 		},
 	}, nil
+}
+
+// applyInitializationOptions replaces the server's environment with the one
+// the client asked for. Each key the client sends overrides the corresponding
+// value the server was started with; keys it omits are left alone.
+func (s *server) applyInitializationOptions(raw json.RawMessage) error {
+	var clientOpts clientInitializationOptions
+	if err := json.Unmarshal(raw, &clientOpts); err != nil {
+		return err
+	}
+	if clientOpts.Extensions == nil && clientOpts.Config == nil {
+		return nil
+	}
+
+	opts := s.startOpts
+	if clientOpts.Extensions != nil {
+		opts.Extensions = clientOpts.Extensions
+	}
+	if clientOpts.Config != nil {
+		opts.Config = nil
+		if path := *clientOpts.Config; path != "" {
+			config, err := LoadConfig(path)
+			if err != nil {
+				return err
+			}
+			opts.Config = config
+		}
+	}
+	return s.setEnv(opts)
 }
 
 func (s *server) Initialized(context.Context, *protocol.InitializedParams) error {
@@ -247,7 +286,7 @@ func (s *server) DidOpen(ctx context.Context, params *protocol.DidOpenTextDocume
 	s.files[f.uri] = f
 	s.mu.Unlock()
 
-	publishDiagnostics(ctx, f, s.celEnv)
+	publishDiagnostics(ctx, f, s.celEnv, s.checkSeverity)
 	return nil
 }
 
@@ -282,7 +321,7 @@ func (s *server) DidChange(ctx context.Context, params *protocol.DidChangeTextDo
 	s.files[f.uri] = f
 	s.mu.Unlock()
 
-	publishDiagnostics(ctx, f, s.celEnv)
+	publishDiagnostics(ctx, f, s.celEnv, s.checkSeverity)
 	return nil
 }
 

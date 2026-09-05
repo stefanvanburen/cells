@@ -3,44 +3,11 @@ package lsp
 import (
 	"slices"
 
-	"cel.dev/cel-go/cel"
 	"go.lsp.dev/protocol"
 )
 
-func newCELEnv(extraOpts ...cel.EnvOption) (*cel.Env, error) {
-	opts := []cel.EnvOption{
-		cel.EnableMacroCallTracking(),
-		// Validate the arguments to duration(), timestamp(), and matches()
-		// when they are literals. cel-go runs these during Check, so bad
-		// literals surface as diagnostics rather than as runtime errors the
-		// author only finds later.
-		//
-		// This is deliberately not cel.ExtendedValidations(), which also
-		// bundles ValidateHomogeneousAggregateLiterals(). Heterogeneous
-		// literals like [1, 'two'] are valid CEL — they type as list(dyn) —
-		// so flagging them would be a false positive.
-		cel.ASTValidators(
-			cel.ValidateDurationLiterals(),
-			cel.ValidateTimestampLiterals(),
-			cel.ValidateRegexLiterals(),
-		),
-	}
-	return cel.NewEnv(append(opts, extraOpts...)...)
-}
-
-// newCELEnvForExtensions builds a CEL environment with the named extension
-// libraries enabled (see extensionFactories for valid names).
-func newCELEnvForExtensions(names []string) (*cel.Env, error) {
-	opts, err := resolveExtensions(names)
-	if err != nil {
-		return nil, err
-	}
-	return newCELEnv(opts...)
-}
-
 // ExtensionNames returns the names of the CEL extension libraries that can be
-// passed to Serve, ServeStream, Format, Check, Hover, References, and Rename,
-// sorted alphabetically.
+// named in Options.Extensions, sorted alphabetically.
 func ExtensionNames() []string {
 	return sortedExtensionNames()
 }
@@ -54,9 +21,8 @@ func ValidateExtensions(names []string) error {
 
 // Format formats the given CEL content.
 // Returns the original content unchanged if formatting is not possible (e.g., parse errors).
-// extensions names CEL extension libraries to enable (see extensionFactories for valid names).
-func Format(content string, extensions ...string) (string, error) {
-	env, err := newCELEnvForExtensions(extensions)
+func Format(content string, opts Options) (string, error) {
+	env, err := newCELEnv(opts)
 	if err != nil {
 		return "", err
 	}
@@ -77,13 +43,15 @@ type CheckDiagnostic struct {
 	Message  string
 }
 
-// Check parses and type-checks the given CEL content, returning any diagnostics.
-func Check(content string, extensions ...string) ([]CheckDiagnostic, error) {
-	env, err := newCELEnvForExtensions(extensions)
+// Check parses and type-checks the given CEL content, returning any
+// diagnostics. A check-phase diagnostic is an error when opts declare the
+// environment and a warning when they do not; see Options.declared.
+func Check(content string, opts Options) ([]CheckDiagnostic, error) {
+	env, err := newCELEnv(opts)
 	if err != nil {
 		return nil, err
 	}
-	diags := computeDiagnostics(&file{uri: cliURI, content: content}, env)
+	diags := computeDiagnostics(&file{uri: cliURI, content: content}, env, checkSeverity(opts))
 	result := make([]CheckDiagnostic, 0, len(diags))
 	for _, d := range diags {
 		sev := "error"
@@ -105,8 +73,8 @@ func Check(content string, extensions ...string) ([]CheckDiagnostic, error) {
 
 // Hover returns hover documentation for the element at the given 1-indexed line:col position.
 // Returns an empty string if no hover info is available.
-func Hover(content string, line, col int, extensions ...string) (string, error) {
-	env, err := newCELEnvForExtensions(extensions)
+func Hover(content string, line, col int, opts Options) (string, error) {
+	env, err := newCELEnv(opts)
 	if err != nil {
 		return "", err
 	}
@@ -134,8 +102,8 @@ type Reference struct {
 }
 
 // References returns all references to the identifier at the given 1-indexed line:col position.
-func References(content string, line, col int, extensions ...string) ([]Reference, error) {
-	env, err := newCELEnvForExtensions(extensions)
+func References(content string, line, col int, opts Options) ([]Reference, error) {
+	env, err := newCELEnv(opts)
 	if err != nil {
 		return nil, err
 	}
@@ -164,8 +132,8 @@ func References(content string, line, col int, extensions ...string) ([]Referenc
 
 // Rename renames the identifier at the given 1-indexed line:col to newName.
 // Returns the updated content, or the original content if nothing was renamed.
-func Rename(content string, line, col int, newName string, extensions ...string) (string, error) {
-	env, err := newCELEnvForExtensions(extensions)
+func Rename(content string, line, col int, newName string, opts Options) (string, error) {
+	env, err := newCELEnv(opts)
 	if err != nil {
 		return "", err
 	}

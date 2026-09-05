@@ -1,9 +1,7 @@
 package lsp
 
 import (
-	"fmt"
 	"slices"
-	"strings"
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/ext"
@@ -73,7 +71,7 @@ func resolveExtensions(names []string) ([]cel.EnvOption, error) {
 	for _, name := range names {
 		factory, ok := extensionFactories[name]
 		if !ok {
-			return nil, fmt.Errorf("unknown CEL extension %q (available: %s)", name, strings.Join(sortedExtensionNames(), ", "))
+			return nil, unknownExtensionError(name)
 		}
 		opts = append(opts, factory())
 	}

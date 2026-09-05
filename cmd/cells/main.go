@@ -35,6 +35,7 @@ func rootCommand() *cli.Command {
 		Summary: "A language server for CEL (Common Expression Language)",
 		Flags: cli.FlagsFunc(func(f *flag.FlagSet) {
 			f.Var(flagtype.StringSlice(), "ext", "enable a CEL extension library (repeatable); one of: "+strings.Join(lsp.ExtensionNames(), ", "))
+			f.String("config", "", "path to a CEL environment configuration declaring variables and types")
 		}),
 		SubCommands: []*cli.Command{
 			serveCommand(),
@@ -45,6 +46,24 @@ func rootCommand() *cli.Command {
 			renameCommand(),
 		},
 	}
+}
+
+// options builds the CEL environment options from the flags every command
+// shares. Extension names are validated here so that a misspelling is
+// reported against the flag rather than from inside the environment.
+func options(s *cli.State) (lsp.Options, error) {
+	opts := lsp.Options{Extensions: cli.GetFlag[[]string](s, "ext")}
+	if err := lsp.ValidateExtensions(opts.Extensions); err != nil {
+		return lsp.Options{}, err
+	}
+	if path := cli.GetFlag[string](s, "config"); path != "" {
+		config, err := lsp.LoadConfig(path)
+		if err != nil {
+			return lsp.Options{}, err
+		}
+		opts.Config = config
+	}
+	return opts, nil
 }
 
 // exitError is returned by commands that want to exit with a specific code
@@ -60,11 +79,11 @@ func serveCommand() *cli.Command {
 		Name:    "serve",
 		Summary: "Start the CEL language server (communicates over stdin/stdout)",
 		Exec: func(_ context.Context, s *cli.State) error {
-			extensions := cli.GetFlag[[]string](s, "ext")
-			if err := lsp.ValidateExtensions(extensions); err != nil {
+			opts, err := options(s)
+			if err != nil {
 				return err
 			}
-			return lsp.Serve(extensions...)
+			return lsp.Serve(opts)
 		},
 	}
 }
@@ -85,8 +104,8 @@ func formatCommand() *cli.Command {
 		Exec: func(_ context.Context, s *cli.State) error {
 			writeBack := cli.GetFlag[bool](s, "write")
 			showDiff := cli.GetFlag[bool](s, "diff")
-			extensions := cli.GetFlag[[]string](s, "ext")
-			if err := lsp.ValidateExtensions(extensions); err != nil {
+			opts, err := options(s)
+			if err != nil {
 				return err
 			}
 
@@ -113,7 +132,7 @@ func formatCommand() *cli.Command {
 						continue
 					}
 				}
-				formatted, err := lsp.Format(string(content), extensions...)
+				formatted, err := lsp.Format(string(content), opts)
 				if err != nil {
 					fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
 					exitCode = 1
@@ -156,8 +175,8 @@ func checkCommand() *cli.Command {
 		Summary: "Check CEL source files for parse and type errors",
 		Usage:   "cells check <file> [file...]",
 		Exec: func(_ context.Context, s *cli.State) error {
-			extensions := cli.GetFlag[[]string](s, "ext")
-			if err := lsp.ValidateExtensions(extensions); err != nil {
+			opts, err := options(s)
+			if err != nil {
 				return err
 			}
 			if len(s.Args) == 0 {
@@ -171,7 +190,7 @@ func checkCommand() *cli.Command {
 					exitCode = 1
 					continue
 				}
-				diags, err := lsp.Check(string(content), extensions...)
+				diags, err := lsp.Check(string(content), opts)
 				if err != nil {
 					fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
 					exitCode = 1
@@ -196,8 +215,8 @@ func hoverCommand() *cli.Command {
 		Summary: "Show documentation for the element at the given position",
 		Usage:   "cells hover <file>:<line>:<col>",
 		Exec: func(_ context.Context, s *cli.State) error {
-			extensions := cli.GetFlag[[]string](s, "ext")
-			if err := lsp.ValidateExtensions(extensions); err != nil {
+			opts, err := options(s)
+			if err != nil {
 				return err
 			}
 			if len(s.Args) != 1 {
@@ -211,7 +230,7 @@ func hoverCommand() *cli.Command {
 			if err != nil {
 				return fmt.Errorf("reading %s: %w", filename, err)
 			}
-			result, err := lsp.Hover(string(content), line, col, extensions...)
+			result, err := lsp.Hover(string(content), line, col, opts)
 			if err != nil {
 				return fmt.Errorf("hover: %w", err)
 			}
@@ -229,8 +248,8 @@ func referencesCommand() *cli.Command {
 		Summary: "List all references to the element at the given position",
 		Usage:   "cells references <file>:<line>:<col>",
 		Exec: func(_ context.Context, s *cli.State) error {
-			extensions := cli.GetFlag[[]string](s, "ext")
-			if err := lsp.ValidateExtensions(extensions); err != nil {
+			opts, err := options(s)
+			if err != nil {
 				return err
 			}
 			if len(s.Args) != 1 {
@@ -244,7 +263,7 @@ func referencesCommand() *cli.Command {
 			if err != nil {
 				return fmt.Errorf("reading %s: %w", filename, err)
 			}
-			refs, err := lsp.References(string(content), line, col, extensions...)
+			refs, err := lsp.References(string(content), line, col, opts)
 			if err != nil {
 				return fmt.Errorf("references: %w", err)
 			}
@@ -272,8 +291,8 @@ func renameCommand() *cli.Command {
 		Exec: func(_ context.Context, s *cli.State) error {
 			newName := cli.GetFlag[string](s, "new-name")
 			writeBack := cli.GetFlag[bool](s, "write")
-			extensions := cli.GetFlag[[]string](s, "ext")
-			if err := lsp.ValidateExtensions(extensions); err != nil {
+			opts, err := options(s)
+			if err != nil {
 				return err
 			}
 
@@ -288,7 +307,7 @@ func renameCommand() *cli.Command {
 			if err != nil {
 				return fmt.Errorf("reading %s: %w", filename, err)
 			}
-			result, err := lsp.Rename(string(content), line, col, newName, extensions...)
+			result, err := lsp.Rename(string(content), line, col, newName, opts)
 			if err != nil {
 				return fmt.Errorf("rename: %w", err)
 			}

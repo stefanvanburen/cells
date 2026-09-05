@@ -23,7 +23,7 @@ import (
 //
 // defaultExtensions is passed through to ServeStream, standing in for the
 // extension names `cells serve --ext=...` would supply.
-func newLSPClient(t *testing.T, client protocol.Client, defaultExtensions ...string) jsonrpc2.Conn {
+func newLSPClient(t *testing.T, client protocol.Client, opts lsp.Options) jsonrpc2.Conn {
 	t.Helper()
 	ctx := t.Context()
 
@@ -36,7 +36,7 @@ func newLSPClient(t *testing.T, client protocol.Client, defaultExtensions ...str
 
 	// Run the LSP server on the server side of the pipe.
 	go func() {
-		_ = lsp.ServeStream(ctx, serverConn, defaultExtensions...)
+		_ = lsp.ServeStream(ctx, serverConn, opts)
 	}()
 
 	_, clientRPC, _ := protocol.NewClient(ctx, client, jsonrpc2.NewStream(clientConn))
@@ -52,7 +52,7 @@ func setupLSPServer(t *testing.T, testFilePath string) (jsonrpc2.Conn, uri.URI) 
 	t.Helper()
 	ctx := t.Context()
 
-	clientRPC := newLSPClient(t, protocol.UnimplementedClient{})
+	clientRPC := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{})
 
 	testURI := uri.File(testFilePath)
 

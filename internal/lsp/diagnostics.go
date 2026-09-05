@@ -10,8 +10,23 @@ import (
 	"go.lsp.dev/protocol"
 )
 
+// checkSeverity returns the severity to report a type-check failure at.
+//
+// Without declarations, every reference to a variable the expression's real
+// environment provides is an undeclared reference, so cells cannot tell a typo
+// from a name it was never told about and reports the whole check phase as a
+// warning. Once a configuration declares the environment, the same diagnostic
+// is a genuine error — including the type errors that would otherwise be
+// buried among the undeclared-reference noise.
+func checkSeverity(opts Options) protocol.DiagnosticSeverity {
+	if opts.declared() {
+		return protocol.DiagnosticSeverityError
+	}
+	return protocol.DiagnosticSeverityWarning
+}
+
 // publishDiagnostics computes and pushes diagnostics for the given file.
-func publishDiagnostics(ctx context.Context, f *file, celEnv *cel.Env) {
+func publishDiagnostics(ctx context.Context, f *file, celEnv *cel.Env, checkSeverity protocol.DiagnosticSeverity) {
 	client, ok := protocol.ClientFromContext(ctx)
 	if !ok {
 		return
@@ -19,7 +34,7 @@ func publishDiagnostics(ctx context.Context, f *file, celEnv *cel.Env) {
 	_ = client.PublishDiagnostics(ctx, &protocol.PublishDiagnosticsParams{
 		URI:         f.uri,
 		Version:     protocol.NewOptional(f.version),
-		Diagnostics: computeDiagnostics(f, celEnv),
+		Diagnostics: computeDiagnostics(f, celEnv, checkSeverity),
 	})
 }
 
@@ -31,7 +46,7 @@ func (s *server) Diagnostic(_ context.Context, params *protocol.DocumentDiagnost
 
 	items := []protocol.Diagnostic{}
 	if f != nil {
-		items = computeDiagnostics(f, s.celEnv)
+		items = computeDiagnostics(f, s.celEnv, s.checkSeverity)
 	}
 	return &protocol.RelatedFullDocumentDiagnosticReport{
 		Kind:  string(protocol.DocumentDiagnosticReportKindFull),
@@ -39,8 +54,10 @@ func (s *server) Diagnostic(_ context.Context, params *protocol.DocumentDiagnost
 	}, nil
 }
 
-// computeDiagnostics parses and type-checks a CEL file, returning LSP diagnostics.
-func computeDiagnostics(f *file, celEnv *cel.Env) []protocol.Diagnostic {
+// computeDiagnostics parses and type-checks a CEL file, returning LSP
+// diagnostics. Parse failures are always errors; checkSeverity says how to
+// report a type-check failure, per the function of the same name.
+func computeDiagnostics(f *file, celEnv *cel.Env, checkSeverity protocol.DiagnosticSeverity) []protocol.Diagnostic {
 	if strings.TrimSpace(f.content) == "" {
 		return []protocol.Diagnostic{}
 	}
@@ -49,7 +66,7 @@ func computeDiagnostics(f *file, celEnv *cel.Env) []protocol.Diagnostic {
 		return issuesToDiagnostics(f.content, parseIssues, protocol.DiagnosticSeverityError)
 	}
 	if checked, checkIssues := f.check(celEnv); checked == nil {
-		return issuesToDiagnostics(f.content, checkIssues, protocol.DiagnosticSeverityWarning)
+		return issuesToDiagnostics(f.content, checkIssues, checkSeverity)
 	}
 
 	// No errors — clear diagnostics.

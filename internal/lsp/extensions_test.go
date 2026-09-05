@@ -14,15 +14,15 @@ import (
 // networkExpr type-checks only when the network extension is enabled.
 const networkExpr = `cidr('10.0.0.0/8').containsIP(ip('10.1.2.3'))`
 
-// diagnosticsForExtensions starts a server whose default extensions are
+// diagnosticsFor starts a server whose default extensions are
 // defaultExtensions (standing in for `cells serve --ext=...`), initializes it
 // with initOptions as raw initializationOptions JSON (omitted entirely when
 // empty), opens a document holding expr, and returns the reported diagnostics.
-func diagnosticsForExtensions(t *testing.T, defaultExtensions []string, initOptions, expr string) []protocol.Diagnostic {
+func diagnosticsFor(t *testing.T, defaultExtensions []string, initOptions, expr string) []protocol.Diagnostic {
 	t.Helper()
 	ctx := t.Context()
 
-	clientRPC := newLSPClient(t, protocol.UnimplementedClient{}, defaultExtensions...)
+	clientRPC := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{Extensions: defaultExtensions})
 
 	params := protocol.InitializeParams{}
 	if initOptions != "" {
@@ -79,7 +79,7 @@ func TestExtensionResolution(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
-			diags := diagnosticsForExtensions(t, tt.defaults, tt.initOptions, networkExpr)
+			diags := diagnosticsFor(t, tt.defaults, tt.initOptions, networkExpr)
 			if tt.wantClean {
 				ok.Equal(t, len(diags), 0)
 			} else {
@@ -93,7 +93,7 @@ func TestInitializeUnknownExtensionFails(t *testing.T) {
 	t.Parallel()
 	ctx := t.Context()
 
-	clientRPC := newLSPClient(t, protocol.UnimplementedClient{})
+	clientRPC := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{})
 
 	var initResult protocol.InitializeResult
 	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{
@@ -139,11 +139,11 @@ func TestExtensionFactories(t *testing.T) {
 		t.Run(tt.ext, func(t *testing.T) {
 			t.Parallel()
 
-			with, err := lsp.Check(tt.expr, tt.ext)
+			with, err := lsp.Check(tt.expr, lsp.Options{Extensions: []string{tt.ext}})
 			ok.MustNoError(t, err)
 			ok.Equal(t, len(with), 0)
 
-			without, err := lsp.Check(tt.expr)
+			without, err := lsp.Check(tt.expr, lsp.Options{})
 			ok.MustNoError(t, err)
 			ok.True(t, len(without) > 0)
 		})
@@ -159,14 +159,14 @@ func TestExtensionProtos(t *testing.T) {
 
 	const expr = `proto.getExt(1, foo)`
 
-	with, err := lsp.Check(expr, "protos")
+	with, err := lsp.Check(expr, lsp.Options{Extensions: []string{"protos"}})
 	ok.MustNoError(t, err)
 	if !ok.Equal(t, len(with), 1) {
 		return
 	}
 	ok.Equal(t, with[0].Message, "invalid extension field")
 
-	without, err := lsp.Check(expr)
+	without, err := lsp.Check(expr, lsp.Options{})
 	ok.MustNoError(t, err)
 	if !ok.True(t, len(without) > 0) {
 		return

@@ -11,6 +11,7 @@ import (
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	lspuri "go.lsp.dev/uri"
+	"go.vanburen.xyz/cells/internal/lsp"
 	"go.vanburen.xyz/ok"
 )
 
@@ -600,7 +601,7 @@ func TestDiagnosticsPushOnOpen(t *testing.T) {
 	ctx := t.Context()
 
 	dc := newDiagnosticCollector()
-	clientRPC := newLSPClient(t, dc)
+	clientRPC := newLSPClient(t, dc, lsp.Options{})
 
 	var initResult protocol.InitializeResult
 	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
@@ -632,7 +633,7 @@ func TestDiagnosticsPushOnChange(t *testing.T) {
 	ctx := t.Context()
 
 	dc := newDiagnosticCollector()
-	clientRPC := newLSPClient(t, dc)
+	clientRPC := newLSPClient(t, dc, lsp.Options{})
 
 	var initResult protocol.InitializeResult
 	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
@@ -712,7 +713,7 @@ func TestDiagnosticsComprehensive(t *testing.T) {
 func TestDiagnosticsCapabilities(t *testing.T) {
 	t.Parallel()
 
-	clientRPC := newLSPClient(t, protocol.UnimplementedClient{})
+	clientRPC := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{})
 
 	var result protocol.InitializeResult
 	_, err := clientRPC.Call(t.Context(), "initialize", protocol.InitializeParams{}, &result)

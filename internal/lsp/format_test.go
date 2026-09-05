@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"go.lsp.dev/protocol"
+	"go.vanburen.xyz/cells/internal/lsp"
 	"go.vanburen.xyz/ok"
 )
 
@@ -68,7 +69,7 @@ func TestFormatParseError(t *testing.T) {
 func TestFormatCapabilities(t *testing.T) {
 	t.Parallel()
 
-	clientRPC := newLSPClient(t, protocol.UnimplementedClient{})
+	clientRPC := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{})
 
 	var result protocol.InitializeResult
 	_, err := clientRPC.Call(t.Context(), "initialize", protocol.InitializeParams{}, &result)
