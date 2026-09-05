@@ -10,6 +10,7 @@ require (
 	go.lsp.dev/protocol v1.0.1
 	go.lsp.dev/uri v1.0.1
 	go.vanburen.xyz/ok v0.4.0
+	google.golang.org/protobuf v1.36.10
 	znkr.io/diff v1.0.1
 )
 
@@ -31,7 +32,6 @@ require (
 	golang.org/x/tools v0.45.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240826202546-f6391c0de4c7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240826202546-f6391c0de4c7 // indirect
-	google.golang.org/protobuf v1.36.10 // indirect
 	honnef.co/go/tools v0.8.0 // indirect
 )
 

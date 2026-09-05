@@ -37,6 +37,7 @@ func rootCommand() *cli.Command {
 		Flags: cli.FlagsFunc(func(f *flag.FlagSet) {
 			f.Var(flagtype.StringSlice(), "ext", "enable a CEL extension library (repeatable); one of: "+strings.Join(lsp.ExtensionNames(), ", "))
 			f.String("config", "", "path to a CEL environment configuration declaring variables and types")
+			f.Var(flagtype.StringSlice(), "descriptor-set", "path to an encoded FileDescriptorSet making its message types resolvable (repeatable)")
 		}),
 		SubCommands: []*cli.Command{
 			serveCommand(),
@@ -56,8 +57,9 @@ func rootCommand() *cli.Command {
 // once per file.
 func options(s *cli.State) (lsp.Options, error) {
 	opts := lsp.Options{
-		Extensions: cli.GetFlag[[]string](s, "ext"),
-		ConfigPath: cli.GetFlag[string](s, "config"),
+		Extensions:     cli.GetFlag[[]string](s, "ext"),
+		ConfigPath:     cli.GetFlag[string](s, "config"),
+		DescriptorSets: cli.GetFlag[[]string](s, "descriptor-set"),
 	}
 	if err := lsp.ValidateExtensions(opts.Extensions); err != nil {
 		return lsp.Options{}, err

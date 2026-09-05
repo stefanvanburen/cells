@@ -10,6 +10,8 @@ import (
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common/env"
 	"cel.dev/cel-go/ext"
+	"google.golang.org/protobuf/proto"
+	"google.golang.org/protobuf/types/descriptorpb"
 )
 
 // unknownExtensionError reports an extension name cells does not accept,
@@ -34,8 +36,14 @@ type Options struct {
 	ConfigPath string
 
 	// Extensions names CEL extension libraries to enable on top of whatever
-	// Config asks for. See ExtensionNames for the valid names.
+	// the configuration asks for. See ExtensionNames for the valid names.
 	Extensions []string
+
+	// DescriptorSets names files holding an encoded
+	// google.protobuf.FileDescriptorSet, as protoc --descriptor_set_out and
+	// buf build produce. The message types they describe become resolvable,
+	// so that a configuration can declare a variable of one.
+	DescriptorSets []string
 }
 
 // declared reports whether these options tell cells what the expressions it
@@ -93,6 +101,18 @@ func LoadConfig(path string) (*env.Config, error) {
 
 // newCELEnv builds the CEL environment described by opts.
 func newCELEnv(opts Options) (*cel.Env, error) {
+	// Types are registered before the configuration is applied, because the
+	// type provider in place when FromConfig runs is the one it resolves the
+	// configuration's type references against.
+	envOpts := make([]cel.EnvOption, 0, len(opts.DescriptorSets)+3)
+	for _, path := range opts.DescriptorSets {
+		descriptors, err := loadDescriptorSet(path)
+		if err != nil {
+			return nil, err
+		}
+		envOpts = append(envOpts, cel.TypeDescs(descriptors))
+	}
+
 	config := env.NewConfig(serverName)
 	if opts.ConfigPath != "" {
 		loaded, err := LoadConfig(opts.ConfigPath)
@@ -113,7 +133,7 @@ func newCELEnv(opts Options) (*cel.Env, error) {
 		config = &withExts
 	}
 
-	return cel.NewEnv(
+	envOpts = append(envOpts,
 		cel.FromConfig(config, extensionOptionFactory),
 
 		// These come after FromConfig deliberately, and the order is load
@@ -139,6 +159,20 @@ func newCELEnv(opts Options) (*cel.Env, error) {
 			cel.ValidateRegexLiterals(),
 		),
 	)
+	return cel.NewEnv(envOpts...)
+}
+
+// loadDescriptorSet reads an encoded google.protobuf.FileDescriptorSet.
+func loadDescriptorSet(path string) (*descriptorpb.FileDescriptorSet, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, err
+	}
+	descriptors := &descriptorpb.FileDescriptorSet{}
+	if err := proto.Unmarshal(data, descriptors); err != nil {
+		return nil, fmt.Errorf("%s: not a FileDescriptorSet: %w", path, err)
+	}
+	return descriptors, nil
 }
 
 // extensionOptionFactory resolves an extension named in a configuration.

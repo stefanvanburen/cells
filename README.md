@@ -141,10 +141,53 @@ server, set `config` in your editor's `initializationOptions`:
 ```
 
 The configuration also accepts `container` and `imports` for namespacing,
-`context_variable` to declare every field of a message as a top-level variable,
-`functions` for host-provided functions, and `extensions` (see below). Message
-types must be linked into the `cells` binary to be resolvable, so proto schemas
-are not yet usable; `stdlib` subsetting is not supported either.
+`functions` for host-provided functions, and `extensions` (see below).
+`stdlib` subsetting is not supported.
+
+### Protobuf schemas
+
+To declare a variable whose type is a protobuf message, point `cells` at an
+encoded `FileDescriptorSet` so it can resolve the type:
+
+```console
+$ buf build -o descriptors.binpb          # or protoc --descriptor_set_out=...
+$ cells check --descriptor-set=descriptors.binpb --config=cel.yaml policy.cel
+```
+
+```yaml
+# cel.yaml
+name: my-service
+variables:
+  - name: request
+    type_name: "my.service.Request"
+```
+
+Field access is then checked against the message:
+
+```console
+$ echo 'request.nosuchfield == 1' > bad.cel
+$ cells check --descriptor-set=descriptors.binpb --config=cel.yaml bad.cel
+bad.cel:1:8: error: undefined field 'nosuchfield'
+```
+
+`context_variable` declares every field of a message as a top-level name
+instead, which is how many hosts present their input:
+
+```yaml
+context_variable:
+  type_name: "my.service.Request"
+```
+
+```console
+$ echo 'method == "POST" && retries < 3' | cells check --descriptor-set=descriptors.binpb --config=cel.yaml /dev/stdin
+```
+
+`--descriptor-set` is repeatable. For the language server, set
+`descriptorSets` in your editor's `initializationOptions`:
+
+```json
+{ "descriptorSets": ["/path/to/descriptors.binpb"] }
+```
 
 ## Extensions
 

@@ -198,8 +198,15 @@ type clientInitializationOptions struct {
 	// Config is the path to a CEL environment configuration file, declaring
 	// the variables and types expressions may refer to. When present it
 	// replaces whatever configuration the server was started with; an empty
-	// string clears it.
+	// string clears it, leaving each document to the configuration found
+	// above it.
 	Config *string `json:"config"`
+
+	// DescriptorSets names files holding an encoded FileDescriptorSet, whose
+	// message types a configuration may then declare variables of. When
+	// present, even as an empty list, it replaces whatever the server was
+	// started with.
+	DescriptorSets []string `json:"descriptorSets"`
 }
 
 func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
@@ -249,7 +256,7 @@ func (s *server) applyInitializationOptions(raw json.RawMessage) error {
 	if err := json.Unmarshal(raw, &clientOpts); err != nil {
 		return err
 	}
-	if clientOpts.Extensions == nil && clientOpts.Config == nil {
+	if clientOpts.Extensions == nil && clientOpts.Config == nil && clientOpts.DescriptorSets == nil {
 		return nil
 	}
 
@@ -259,6 +266,9 @@ func (s *server) applyInitializationOptions(raw json.RawMessage) error {
 	}
 	if clientOpts.Config != nil {
 		opts.ConfigPath = *clientOpts.Config
+	}
+	if clientOpts.DescriptorSets != nil {
+		opts.DescriptorSets = clientOpts.DescriptorSets
 	}
 	return s.setEnv(opts)
 }
