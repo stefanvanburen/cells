@@ -99,25 +99,44 @@ func LoadConfig(path string) (*env.Config, error) {
 	return config, nil
 }
 
-// newCELEnv builds the CEL environment described by opts.
-func newCELEnv(opts Options) (*cel.Env, error) {
+// newEnvironment builds the environment described by opts: the CEL environment
+// itself, and what cells knows about it that cel-go does not record.
+func newEnvironment(opts Options) (*environment, error) {
+	celEnv, fieldDocs, err := newCELEnv(opts)
+	if err != nil {
+		return nil, err
+	}
+	return &environment{
+		celEnv:        celEnv,
+		checkSeverity: checkSeverity(opts),
+		fieldDocs:     fieldDocs,
+		configPath:    opts.ConfigPath,
+	}, nil
+}
+
+// newCELEnv builds the CEL environment described by opts, along with the
+// documentation its descriptor sets carry, which cel-go's type provider does
+// not keep.
+func newCELEnv(opts Options) (*cel.Env, map[string]string, error) {
 	// Types are registered before the configuration is applied, because the
 	// type provider in place when FromConfig runs is the one it resolves the
 	// configuration's type references against.
 	envOpts := make([]cel.EnvOption, 0, len(opts.DescriptorSets)+3)
+	fieldDocs := make(map[string]string)
 	for _, path := range opts.DescriptorSets {
 		descriptors, err := loadDescriptorSet(path)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		envOpts = append(envOpts, cel.TypeDescs(descriptors))
+		protoFieldDocs(descriptors, fieldDocs)
 	}
 
 	config := env.NewConfig(serverName)
 	if opts.ConfigPath != "" {
 		loaded, err := LoadConfig(opts.ConfigPath)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		config = loaded
 	}
@@ -159,7 +178,11 @@ func newCELEnv(opts Options) (*cel.Env, error) {
 			cel.ValidateRegexLiterals(),
 		),
 	)
-	return cel.NewEnv(envOpts...)
+	celEnv, err := cel.NewEnv(envOpts...)
+	if err != nil {
+		return nil, nil, err
+	}
+	return celEnv, fieldDocs, nil
 }
 
 // loadDescriptorSet reads an encoded google.protobuf.FileDescriptorSet.

@@ -29,7 +29,7 @@ func (s *server) Completion(_ context.Context, params *protocol.CompletionParams
 	// Dot context: member completions filtered by receiver type.
 	if f != nil && isDotContext(f.content, params.Position) {
 		receiverType := receiverTypeAtDot(f.content, params.Position, docEnv.celEnv)
-		items := fieldCompletionItems(docEnv.celEnv, receiverType)
+		items := fieldCompletionItems(docEnv, receiverType)
 		items = append(items, memberCompletionItems(docEnv.celEnv, receiverType)...)
 		return &protocol.CompletionList{
 			IsIncomplete: false,
@@ -268,12 +268,12 @@ func variableCompletionItems(celEnv *cel.Env, expectedType *types.Type) []protoc
 // fieldCompletionItems offers the fields of a message-typed receiver, so that
 // completing after the dot in request. lists what the message actually holds.
 // Anything else — a map, a list, a scalar — has no fields to offer.
-func fieldCompletionItems(celEnv *cel.Env, receiverType *types.Type) []protocol.CompletionItem {
+func fieldCompletionItems(docEnv *environment, receiverType *types.Type) []protocol.CompletionItem {
 	if receiverType == nil || receiverType.Kind() != types.StructKind {
 		return nil
 	}
 	typeName := receiverType.TypeName()
-	provider := celEnv.CELTypeProvider()
+	provider := docEnv.celEnv.CELTypeProvider()
 	fieldNames, found := provider.FindStructFieldNames(typeName)
 	if !found {
 		return nil
@@ -282,8 +282,9 @@ func fieldCompletionItems(celEnv *cel.Env, receiverType *types.Type) []protocol.
 	items := make([]protocol.CompletionItem, 0, len(fieldNames))
 	for _, name := range fieldNames {
 		item := protocol.CompletionItem{
-			Label: name,
-			Kind:  protocol.CompletionItemKindField,
+			Label:         name,
+			Kind:          protocol.CompletionItemKindField,
+			Documentation: docString(docEnv.fieldDoc(receiverType, name)),
 		}
 		if fieldType, ok := provider.FindStructFieldType(typeName, name); ok {
 			item.Detail = protocol.NewOptional(fieldType.Type.String())

@@ -14,7 +14,7 @@ $ go install go.vanburen.xyz/cells/cmd/cells@latest
 * Semantic highlighting
 * Diagnostics
 * Formatting
-* Hover (including declared variable and message field types)
+* Hover (including declared variable types, and message field types and comments)
 * References
 * Go to definition
 * Completion (including declared variables and message fields)
@@ -185,6 +185,19 @@ $ echo 'request.nosuchfield == 1' > bad.cel
 $ cells check --descriptor-set=descriptors.binpb --config=cel.yaml bad.cel
 bad.cel:1:8: error: undefined field 'nosuchfield'
 ```
+
+Hover and completion report a field's type along with the comment written
+above it in the `.proto` file, which travels in the descriptor set:
+
+```console
+$ cells hover --descriptor-set=descriptors.binpb --config=cel.yaml policy.cel:1:9
+`method`: `string`
+
+The HTTP method, uppercased.
+```
+
+`buf build` includes the comments by default; `protoc` needs
+`--include_source_info`. Without them the type is reported on its own.
 
 Hover reports a declared variable's type and whatever `description` the
 configuration gave it, and completion offers the declared names — after a dot

@@ -23,11 +23,11 @@ func ValidateExtensions(names []string) error {
 // Format formats the given CEL content.
 // Returns the original content unchanged if formatting is not possible (e.g., parse errors).
 func Format(content string, opts Options) (string, error) {
-	env, err := newCELEnv(opts)
+	docEnv, err := newEnvironment(opts)
 	if err != nil {
 		return "", err
 	}
-	return formatCEL(content, env)
+	return formatCEL(content, docEnv.celEnv)
 }
 
 // cliURI stands in for a document URI when these entry points are called from
@@ -48,11 +48,11 @@ type CheckDiagnostic struct {
 // diagnostics. A check-phase diagnostic is an error when opts declare the
 // environment and a warning when they do not; see Options.declared.
 func Check(content string, opts Options) ([]CheckDiagnostic, error) {
-	env, err := newCELEnv(opts)
+	docEnv, err := newEnvironment(opts)
 	if err != nil {
 		return nil, err
 	}
-	diags := computeDiagnostics(&file{uri: cliURI, content: content}, env, checkSeverity(opts))
+	diags := computeDiagnostics(&file{uri: cliURI, content: content}, docEnv.celEnv, docEnv.checkSeverity)
 	result := make([]CheckDiagnostic, 0, len(diags))
 	for _, d := range diags {
 		sev := "error"
@@ -75,12 +75,12 @@ func Check(content string, opts Options) ([]CheckDiagnostic, error) {
 // Hover returns hover documentation for the element at the given 1-indexed line:col position.
 // Returns an empty string if no hover info is available.
 func Hover(content string, line, col int, opts Options) (string, error) {
-	env, err := newCELEnv(opts)
+	docEnv, err := newEnvironment(opts)
 	if err != nil {
 		return "", err
 	}
 	f := &file{uri: cliURI, content: content}
-	result, err := computeHover(f, env, protocol.Position{
+	result, err := computeHover(f, docEnv, protocol.Position{
 		Line:      uint32(line - 1),
 		Character: uint32(col - 1),
 	})
@@ -104,12 +104,12 @@ type Reference struct {
 
 // References returns all references to the identifier at the given 1-indexed line:col position.
 func References(content string, line, col int, opts Options) ([]Reference, error) {
-	env, err := newCELEnv(opts)
+	docEnv, err := newEnvironment(opts)
 	if err != nil {
 		return nil, err
 	}
 	f := &file{uri: cliURI, content: content}
-	locs, err := computeReferences(f, env, protocol.ReferenceParams{
+	locs, err := computeReferences(f, docEnv.celEnv, protocol.ReferenceParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: f.uri},
 		Position: protocol.Position{
 			Line:      uint32(line - 1),
@@ -149,12 +149,12 @@ type Definition struct {
 // Unlike the other entry points this one takes the file's path, because its
 // result names a file.
 func FindDefinition(path, content string, line, col int, opts Options) (Definition, bool, error) {
-	env, err := newCELEnv(opts)
+	docEnv, err := newEnvironment(opts)
 	if err != nil {
 		return Definition{}, false, err
 	}
 	f := &file{uri: lspuri.File(path), content: content}
-	location, found := computeDefinition(f, env, opts.ConfigPath, protocol.Position{
+	location, found := computeDefinition(f, docEnv.celEnv, docEnv.configPath, protocol.Position{
 		Line:      uint32(line - 1),
 		Character: uint32(col - 1),
 	})
@@ -173,12 +173,12 @@ func FindDefinition(path, content string, line, col int, opts Options) (Definiti
 // Rename renames the identifier at the given 1-indexed line:col to newName.
 // Returns the updated content, or the original content if nothing was renamed.
 func Rename(content string, line, col int, newName string, opts Options) (string, error) {
-	env, err := newCELEnv(opts)
+	docEnv, err := newEnvironment(opts)
 	if err != nil {
 		return "", err
 	}
 	f := &file{uri: cliURI, content: content}
-	edit, err := computeRename(f, env, protocol.RenameParams{
+	edit, err := computeRename(f, docEnv.celEnv, protocol.RenameParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: f.uri},
 		Position: protocol.Position{
 			Line:      uint32(line - 1),

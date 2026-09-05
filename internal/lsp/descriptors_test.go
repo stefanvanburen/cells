@@ -25,6 +25,8 @@ import (
 //	  int64 retries = 2;
 //	  Nested nested = 3;
 //	  repeated string tags = 4;
+//	  Inner inner = 5;
+//	  message Inner { string label = 1; }
 //	}
 //	message Nested { string name = 1; }
 func writeDescriptorSet(t *testing.T) string {
@@ -37,11 +39,43 @@ func writeDescriptorSet(t *testing.T) string {
 	repeated := descriptorpb.FieldDescriptorProto_LABEL_REPEATED
 	proto3 := "proto3"
 
+	// Comments live in SourceCodeInfo, keyed by a path into the descriptor:
+	// [4, 0, 2, 0] is message 0, field 0. protoc records them with their
+	// leading space and trailing newline, which is what these reproduce.
+	sourceInfo := &descriptorpb.SourceCodeInfo{
+		Location: []*descriptorpb.SourceCodeInfo_Location{
+			{
+				Path:            []int32{4, 0, 2, 0},
+				Span:            []int32{3, 2, 20},
+				LeadingComments: new(" The HTTP method, uppercased.\n\n Only POST and GET reach policy evaluation.\n"),
+			},
+			{
+				Path:             []int32{4, 0, 2, 1},
+				Span:             []int32{4, 2, 20},
+				TrailingComments: new(" How many times this has been retried.\n"),
+			},
+			{
+				// A field of the sibling message.
+				Path:            []int32{4, 1, 2, 0},
+				Span:            []int32{8, 2, 20},
+				LeadingComments: new(" The name of the thing.\n"),
+			},
+			{
+				// A field of a message declared inside Request, which the
+				// index only reaches by descending into nested_type.
+				Path:            []int32{4, 0, 3, 0, 2, 0},
+				Span:            []int32{6, 4, 20},
+				LeadingComments: new(" A label on the inner message.\n"),
+			},
+		},
+	}
+
 	set := &descriptorpb.FileDescriptorSet{
 		File: []*descriptorpb.FileDescriptorProto{{
-			Name:    new("cells/test/request.proto"),
-			Package: new("cells.test"),
-			Syntax:  &proto3,
+			SourceCodeInfo: sourceInfo,
+			Name:           new("cells/test/request.proto"),
+			Package:        new("cells.test"),
+			Syntax:         &proto3,
 			MessageType: []*descriptorpb.DescriptorProto{
 				{
 					Name: new("Request"),
@@ -50,6 +84,15 @@ func writeDescriptorSet(t *testing.T) string {
 						{Name: new("retries"), Number: proto.Int32(2), Type: &i64, Label: &optional, JsonName: new("retries")},
 						{Name: new("nested"), Number: proto.Int32(3), Type: &msg, Label: &optional, TypeName: new(".cells.test.Nested"), JsonName: new("nested")},
 						{Name: new("tags"), Number: proto.Int32(4), Type: &str, Label: &repeated, JsonName: new("tags")},
+						{Name: new("inner"), Number: proto.Int32(5), Type: &msg, Label: &optional, TypeName: new(".cells.test.Request.Inner"), JsonName: new("inner")},
+					},
+					NestedType: []*descriptorpb.DescriptorProto{
+						{
+							Name: new("Inner"),
+							Field: []*descriptorpb.FieldDescriptorProto{
+								{Name: new("label"), Number: proto.Int32(1), Type: &str, Label: &optional, JsonName: new("label")},
+							},
+						},
 					},
 				},
 				{
@@ -61,6 +104,27 @@ func writeDescriptorSet(t *testing.T) string {
 			},
 		}},
 	}
+
+	return marshalDescriptorSet(t, set)
+}
+
+// writeDescriptorSetWithout writes the same set after alter has changed it.
+func writeDescriptorSetWithout(t *testing.T, alter func(*descriptorpb.FileDescriptorProto)) string {
+	t.Helper()
+
+	path := writeDescriptorSet(t)
+	data, err := os.ReadFile(path)
+	ok.MustNoError(t, err)
+	set := &descriptorpb.FileDescriptorSet{}
+	ok.MustNoError(t, proto.Unmarshal(data, set))
+	for _, file := range set.File {
+		alter(file)
+	}
+	return marshalDescriptorSet(t, set)
+}
+
+func marshalDescriptorSet(t *testing.T, set *descriptorpb.FileDescriptorSet) string {
+	t.Helper()
 
 	data, err := proto.Marshal(set)
 	ok.MustNoError(t, err)
@@ -270,7 +334,21 @@ variables:
 		items := completionAt(t, conn, celPath, protocol.Position{Line: 0, Character: 8})
 		// A message has fields and no member functions of its own, so its
 		// fields are the whole of what can follow the dot.
-		ok.DeepEqual(t, labelsOf(items), []string{"method", "nested", "retries", "tags"})
+		ok.DeepEqual(t, labelsOf(items), []string{"inner", "method", "nested", "retries", "tags"})
+
+		// Each carries its type, and its documentation from the .proto file.
+		for _, item := range items {
+			if item.Label != "method" {
+				continue
+			}
+			detail, _ := item.Detail.Get()
+			ok.Equal(t, detail, "string")
+			markup, _ := item.Documentation.(*protocol.MarkupContent)
+			if ok.True(t, markup != nil, ok.Sprintf("documentation: %v", item.Documentation)) {
+				ok.True(t, strings.Contains(markup.Value, "The HTTP method, uppercased."),
+					ok.Sprintf("documentation: %q", markup.Value))
+			}
+		}
 	})
 
 	t.Run("no_fields_on_a_scalar", func(t *testing.T) {
@@ -323,4 +401,92 @@ func labelsOf(items []protocol.CompletionItem) []string {
 		labels = append(labels, item.Label)
 	}
 	return labels
+}
+
+// A .proto file's comments are the documentation for its fields, and they
+// survive into the descriptor set. cel-go's type provider knows a field's type
+// but not what was written about it, so cells indexes the comments itself.
+func TestProtoFieldDocumentation(t *testing.T) {
+	t.Parallel()
+
+	opts := loadOptions(t, `
+name: test
+variables:
+  - name: request
+    type_name: "cells.test.Request"
+`)
+	opts.DescriptorSets = []string{writeDescriptorSet(t)}
+
+	t.Run("leading_comment", func(t *testing.T) {
+		t.Parallel()
+
+		// Column 9 is the "m" of method.
+		got, err := lsp.Hover(`request.method == "POST"`, 1, 9, opts)
+		ok.MustNoError(t, err)
+		ok.True(t, strings.Contains(got, "The HTTP method, uppercased."), ok.Sprintf("hover: %q", got))
+		// A comment spanning several lines keeps its shape, without the
+		// leading space protoc records against each line.
+		ok.True(t, strings.Contains(got, "\nOnly POST and GET reach policy evaluation."), ok.Sprintf("hover: %q", got))
+		// The type is still there.
+		ok.True(t, strings.Contains(got, "`method`: `string`"), ok.Sprintf("hover: %q", got))
+	})
+
+	t.Run("trailing_comment", func(t *testing.T) {
+		t.Parallel()
+
+		got, err := lsp.Hover("request.retries < 3", 1, 9, opts)
+		ok.MustNoError(t, err)
+		ok.True(t, strings.Contains(got, "How many times this has been retried."), ok.Sprintf("hover: %q", got))
+	})
+
+	t.Run("field_of_another_message", func(t *testing.T) {
+		t.Parallel()
+
+		// Column 16 is the "n" of name in request.nested.name.
+		got, err := lsp.Hover(`request.nested.name == "x"`, 1, 16, opts)
+		ok.MustNoError(t, err)
+		ok.True(t, strings.Contains(got, "The name of the thing."), ok.Sprintf("hover: %q", got))
+	})
+
+	t.Run("field_of_a_nested_message", func(t *testing.T) {
+		t.Parallel()
+
+		// Inner is declared inside Request, so its documentation is only
+		// reachable by descending into nested_type. Column 15 is the "l" of
+		// label in request.inner.label.
+		got, err := lsp.Hover(`request.inner.label == "x"`, 1, 15, opts)
+		ok.MustNoError(t, err)
+		ok.True(t, strings.Contains(got, "A label on the inner message."), ok.Sprintf("hover: %q", got))
+	})
+
+	t.Run("field_without_a_comment", func(t *testing.T) {
+		t.Parallel()
+
+		// tags has no comment; the type is reported on its own.
+		got, err := lsp.Hover(`request.tags.size() > 0`, 1, 9, opts)
+		ok.MustNoError(t, err)
+		ok.True(t, strings.Contains(got, "`tags`"), ok.Sprintf("hover: %q", got))
+		ok.True(t, !strings.Contains(got, "comment"), ok.Sprintf("hover: %q", got))
+	})
+}
+
+// A descriptor set built without source info carries no comments, and hover
+// falls back to reporting the type alone rather than failing.
+func TestProtoFieldDocumentationWithoutSourceInfo(t *testing.T) {
+	t.Parallel()
+
+	set := writeDescriptorSetWithout(t, func(f *descriptorpb.FileDescriptorProto) {
+		f.SourceCodeInfo = nil
+	})
+	opts := loadOptions(t, `
+name: test
+variables:
+  - name: request
+    type_name: "cells.test.Request"
+`)
+	opts.DescriptorSets = []string{set}
+
+	got, err := lsp.Hover(`request.method == "POST"`, 1, 9, opts)
+	ok.MustNoError(t, err)
+	ok.Equal(t, got, "`method`: `string`")
 }

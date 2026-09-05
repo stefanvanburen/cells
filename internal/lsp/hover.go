@@ -23,7 +23,7 @@ func (s *server) Hover(_ context.Context, params *protocol.HoverParams) (*protoc
 		return nil, nil
 	}
 
-	return computeHover(f, docEnv.celEnv, params.Position)
+	return computeHover(f, docEnv, params.Position)
 }
 
 // hoverInfo represents hover documentation for a CEL element.
@@ -33,7 +33,8 @@ type hoverInfo struct {
 	markdown  string
 }
 
-func computeHover(f *file, celEnv *cel.Env, pos protocol.Position) (*protocol.Hover, error) {
+func computeHover(f *file, docEnv *environment, pos protocol.Position) (*protocol.Hover, error) {
+	celEnv := docEnv.celEnv
 	nativeAST := f.ast(celEnv)
 	if nativeAST == nil {
 		return nil, nil
@@ -61,7 +62,7 @@ func computeHover(f *file, celEnv *cel.Env, pos protocol.Position) (*protocol.Ho
 
 	walkCELExprForHover(nativeAST.Expr(), sourceInfo, f.content, celEnv, collectHover, nil)
 	collectMacroHovers(sourceInfo, f.content, celEnv, collectHover)
-	collectDeclaredHovers(f, celEnv, nativeAST, collectHover)
+	collectDeclaredHovers(f, docEnv, nativeAST, collectHover)
 
 	// Find the most specific (smallest) hover that contains the target offset.
 	var best *hoverInfo
@@ -99,10 +100,11 @@ func computeHover(f *file, celEnv *cel.Env, pos protocol.Position) (*protocol.Ho
 // nothing until a configuration does.
 func collectDeclaredHovers(
 	f *file,
-	celEnv *cel.Env,
+	docEnv *environment,
 	nativeAST *ast.AST,
 	collectHover func(byteStart, byteEnd int, markdown string),
 ) {
+	celEnv := docEnv.celEnv
 	variables := make(map[string]*decls.VariableDecl)
 	for _, variable := range celEnv.Variables() {
 		variables[variable.Name()] = variable
@@ -157,7 +159,8 @@ func collectDeclaredHovers(
 			if !found {
 				return
 			}
-			collectHover(start, end, declaredVariableHover(fieldName, fieldType, ""))
+			collectHover(start, end, declaredVariableHover(fieldName, fieldType,
+				docEnv.fieldDoc(typeOf(e.AsSelect().Operand().ID()), fieldName)))
 		}
 	}))
 }

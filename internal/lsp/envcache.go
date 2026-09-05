@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common/types"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )
@@ -19,11 +20,27 @@ type environment struct {
 	// reported; see the function of the same name.
 	checkSeverity protocol.DiagnosticSeverity
 
+	// fieldDocs holds the documentation the environment's descriptor sets
+	// carry, keyed by fully-qualified field name. cel-go's type provider knows
+	// a field's type but not what the .proto file said about it.
+	fieldDocs map[string]string
+
 	// configPath is the configuration this environment was built from, or ""
 	// when it was built from none. stamp is what that file looked like at the
 	// time, so that a later edit to it is noticed.
 	configPath string
 	stamp      fileStamp
+}
+
+// fieldDoc returns the documentation the .proto file carried for a field of
+// the given message type, or "" when there is none — the type is not a
+// message, the descriptor set was built without source info, or the field
+// simply has no comment.
+func (e *environment) fieldDoc(messageType *types.Type, fieldName string) string {
+	if e == nil || messageType == nil || messageType.Kind() != types.StructKind {
+		return ""
+	}
+	return e.fieldDocs[messageType.TypeName()+"."+fieldName]
 }
 
 // fileStamp is the part of a file's metadata cells uses to decide whether it
@@ -100,17 +117,12 @@ func (c *envCache) forPath(configPath string) (*environment, error) {
 
 	opts := c.opts
 	opts.ConfigPath = configPath
-	celEnv, err := newCELEnv(opts)
+	built, err := newEnvironment(opts)
 	if err != nil {
 		return nil, err
 	}
+	built.stamp = stamp
 
-	built := &environment{
-		celEnv:        celEnv,
-		checkSeverity: checkSeverity(opts),
-		configPath:    configPath,
-		stamp:         stamp,
-	}
 	c.byPath[configPath] = built
 	return built, nil
 }
