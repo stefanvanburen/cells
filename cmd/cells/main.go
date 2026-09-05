@@ -17,7 +17,20 @@ import (
 )
 
 func main() {
-	root := &cli.Command{
+	if err := cli.ParseAndRun(context.Background(), rootCommand(), os.Args[1:], nil); err != nil {
+		if exitErr, ok := errors.AsType[*exitError](err); ok {
+			os.Exit(exitErr.code)
+		}
+		fmt.Fprintf(os.Stderr, "error: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+// rootCommand builds the cells command tree. It is a function rather than a
+// package-level value so that each run, including each test, gets its own
+// flag sets.
+func rootCommand() *cli.Command {
+	return &cli.Command{
 		Name:    "cells",
 		Summary: "A language server for CEL (Common Expression Language)",
 		Flags: cli.FlagsFunc(func(f *flag.FlagSet) {
@@ -31,13 +44,6 @@ func main() {
 			referencesCommand(),
 			renameCommand(),
 		},
-	}
-	if err := cli.ParseAndRun(context.Background(), root, os.Args[1:], nil); err != nil {
-		if exitErr, ok := errors.AsType[*exitError](err); ok {
-			os.Exit(exitErr.code)
-		}
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
 	}
 }
 
@@ -93,47 +99,47 @@ func formatCommand() *cli.Command {
 				var content []byte
 				var err error
 				if filename == "-" {
-					content, err = io.ReadAll(os.Stdin)
+					content, err = io.ReadAll(s.Stdin)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "<stdin>: %v\n", err)
+						fmt.Fprintf(s.Stderr, "<stdin>: %v\n", err)
 						exitCode = 1
 						continue
 					}
 				} else {
 					content, err = os.ReadFile(filename)
 					if err != nil {
-						fmt.Fprintf(os.Stderr, "%s: %v\n", filename, err)
+						fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
 						exitCode = 1
 						continue
 					}
 				}
 				formatted, err := lsp.Format(string(content), extensions...)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "%s: %v\n", filename, err)
+					fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
 					exitCode = 1
 					continue
 				}
 				if showDiff {
 					if formatted != string(content) {
-						fmt.Print(diffUnified(filename, string(content), formatted))
+						fmt.Fprint(s.Stdout, diffUnified(filename, string(content), formatted))
 						exitCode = 1
 					}
 				}
 				if writeBack {
 					if filename == "-" {
-						fmt.Fprintf(os.Stderr, "format: cannot use --write with stdin\n")
+						fmt.Fprintf(s.Stderr, "format: cannot use --write with stdin\n")
 						exitCode = 1
 						continue
 					}
 					if formatted != string(content) {
 						if err := os.WriteFile(filename, []byte(formatted), 0o644); err != nil {
-							fmt.Fprintf(os.Stderr, "%s: %v\n", filename, err)
+							fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
 							exitCode = 1
 						}
 					}
 				}
 				if !showDiff && !writeBack {
-					fmt.Print(formatted)
+					fmt.Fprint(s.Stdout, formatted)
 				}
 			}
 			if exitCode != 0 {
@@ -161,18 +167,18 @@ func checkCommand() *cli.Command {
 			for _, filename := range s.Args {
 				content, err := os.ReadFile(filename)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "%s: %v\n", filename, err)
+					fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
 					exitCode = 1
 					continue
 				}
 				diags, err := lsp.Check(string(content), extensions...)
 				if err != nil {
-					fmt.Fprintf(os.Stderr, "%s: %v\n", filename, err)
+					fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
 					exitCode = 1
 					continue
 				}
 				for _, d := range diags {
-					fmt.Printf("%s:%d:%d: %s: %s\n", filename, d.Line, d.Col, d.Severity, d.Message)
+					fmt.Fprintf(s.Stdout, "%s:%d:%d: %s: %s\n", filename, d.Line, d.Col, d.Severity, d.Message)
 					exitCode = 1
 				}
 			}
@@ -210,7 +216,7 @@ func hoverCommand() *cli.Command {
 				return fmt.Errorf("hover: %w", err)
 			}
 			if result != "" {
-				fmt.Println(result)
+				fmt.Fprintln(s.Stdout, result)
 			}
 			return nil
 		},
@@ -243,7 +249,7 @@ func referencesCommand() *cli.Command {
 				return fmt.Errorf("references: %w", err)
 			}
 			for _, ref := range refs {
-				fmt.Printf("%s:%d:%d\n", filename, ref.Line, ref.Col)
+				fmt.Fprintf(s.Stdout, "%s:%d:%d\n", filename, ref.Line, ref.Col)
 			}
 			return nil
 		},
@@ -289,7 +295,7 @@ func renameCommand() *cli.Command {
 			if writeBack {
 				return os.WriteFile(filename, []byte(result), 0o644)
 			}
-			fmt.Print(result)
+			fmt.Fprint(s.Stdout, result)
 			return nil
 		},
 	}
