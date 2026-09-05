@@ -64,6 +64,19 @@ func TestRename(t *testing.T) {
 			expectedCount: 2,
 			description:   "Rename loop variable in map comprehension",
 		},
+		// Multi-byte characters before a multi-character identifier: cel-go
+		// reports the identifier's start as a rune offset but its length in
+		// bytes, so the two disagree only once a multi-byte character
+		// precedes the token. Renaming on a bad range would corrupt the file.
+		{
+			name:          "rename_after_multibyte",
+			file:          "testdata/rename/multibyte_before_ident.cel",
+			position:      protocol.Position{Line: 0, Character: 7},
+			newName:       "zz",
+			testType:      typeRename,
+			expectedCount: 2,
+			description:   "Rename xy in ('éé' + xy + xy)",
+		},
 		{
 			name:          "rename_filter_variable",
 			file:          "testdata/rename/filter_variable.cel",

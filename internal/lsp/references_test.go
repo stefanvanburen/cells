@@ -57,6 +57,21 @@ func TestReferences(t *testing.T) {
 			description: "References with emoji nearby (x + \"🎉\" + x) - validates UTF-16 handling",
 		},
 
+		// Multi-byte characters before a multi-character identifier: cel-go
+		// reports the identifier's start as a rune offset but its length in
+		// bytes, so the two disagree only once a multi-byte character
+		// precedes the token.
+		{
+			name:     "multibyte_before_ident",
+			file:     "testdata/references/multibyte_before_ident.cel",
+			position: protocol.Position{Line: 0, Character: 7},
+			expectedRanges: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 7}, End: protocol.Position{Line: 0, Character: 9}},
+				{Start: protocol.Position{Line: 0, Character: 12}, End: protocol.Position{Line: 0, Character: 14}},
+			},
+			description: "References to xy in ('éé' + xy + xy)",
+		},
+
 		// Loop variable test
 		{
 			name:     "map_loop_var_references",
@@ -86,8 +101,11 @@ func TestReferences(t *testing.T) {
 
 			refs := requestReferences(t, conn, uri, tc.position)
 
-			// Verify exact count
-			ok.Equal(t, len(refs), len(tc.expectedRanges))
+			// Verify exact count. Bail out on a mismatch: the position
+			// checks below index into both slices.
+			if !ok.Equal(t, len(refs), len(tc.expectedRanges)) {
+				return
+			}
 
 			// Verify all references point to the same document
 			for _, ref := range refs {

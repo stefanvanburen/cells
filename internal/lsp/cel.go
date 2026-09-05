@@ -28,6 +28,13 @@ func isCELMacroFunction(funcName string) bool {
 		funcName == operators.Filter
 }
 
+// isCELComprehensionMacro reports whether the function name is a CEL macro
+// that binds a loop variable. It is every macro but has(), which takes a field
+// selection rather than a variable and a body.
+func isCELComprehensionMacro(funcName string) bool {
+	return isCELMacroFunction(funcName) && funcName != operators.Has
+}
+
 // celOperatorSymbol maps CEL operator function names to their operator symbols.
 func celOperatorSymbol(funcName string) (string, bool) {
 	if symbol, found := operators.FindReverse(funcName); found && symbol != "" {
@@ -44,7 +51,6 @@ func celOperatorSymbol(funcName string) (string, bool) {
 }
 
 // celRuneOffsetToByteOffset converts a rune offset to a UTF-8 byte offset within a string.
-// Used by celOffsetRangeToByteRange to interpret CEL offsets as rune-based when appropriate.
 func celRuneOffsetToByteOffset(s string, runeOffset int32) int {
 	byteIdx := 0
 	for runeIdx := int32(0); runeIdx < runeOffset && byteIdx < len(s); runeIdx++ {
@@ -54,44 +60,22 @@ func celRuneOffsetToByteOffset(s string, runeOffset int32) int {
 	return byteIdx
 }
 
-// celOffsetRangeToByteRange converts a CEL ast.OffsetRange to byte offsets.
-// CEL reports offsets inconsistently for different token types:
-// - String literals: sometimes byte offsets (potentially with off-by-one errors)
-// - Operators: rune offsets
-// We use a heuristic: try byte offsets first, then rune offsets, and pick the one
-// that produces non-whitespace content (since CEL sometimes pads offsets with spaces).
+// celOffsetRangeToByteRange converts a CEL ast.OffsetRange to UTF-8 byte offsets.
+//
+// The two ends of an OffsetRange are not measured in the same units. cel-go
+// parses over a code-point buffer (common.NewStringSource wraps the source in
+// a runes.Buffer), so Start is a rune offset; Stop is Start plus the token's
+// *byte* length, because ANTLR reports token lengths against the underlying
+// UTF-8 text. The two units coincide for an all-ASCII token, and only a string
+// literal can be anything else — CEL identifiers and operators are ASCII — so
+// the difference shows up as soon as a multi-byte character precedes a token.
+//
+// The conversion is therefore exact: translate Start from runes to bytes, then
+// add the length unchanged.
 func celOffsetRangeToByteRange(exprString string, r celast.OffsetRange) (byteStart, byteStop int) {
-	start := int(r.Start)
-	stop := int(r.Stop)
-
-	// Try byte offsets first if they're valid
-	if start >= 0 && stop <= len(exprString) {
-		byteText := exprString[start:stop]
-		if utf8.ValidString(byteText) && !startsWithWhitespace(byteText) {
-			return start, stop
-		}
-	}
-
-	// Try rune offsets
-	runeStart := celRuneOffsetToByteOffset(exprString, int32(start))
-	runeStop := celRuneOffsetToByteOffset(exprString, int32(stop))
-	if runeStart >= 0 && runeStop <= len(exprString) {
-		runeText := exprString[runeStart:runeStop]
-		if utf8.ValidString(runeText) && !startsWithWhitespace(runeText) {
-			return runeStart, runeStop
-		}
-	}
-
-	// Fall back to byte offsets
-	return start, stop
-}
-
-func startsWithWhitespace(s string) bool {
-	if len(s) == 0 {
-		return false
-	}
-	r, _ := utf8.DecodeRuneInString(s)
-	return r == ' ' || r == '\t' || r == '\n' || r == '\r'
+	byteStart = celRuneOffsetToByteOffset(exprString, r.Start)
+	byteStop = min(byteStart+int(r.Stop-r.Start), len(exprString))
+	return byteStart, byteStop
 }
 
 // findMethodNameAfterDot finds ".methodName" after targetByteOffset.

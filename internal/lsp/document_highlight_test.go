@@ -44,6 +44,19 @@ func TestDocumentHighlight(t *testing.T) {
 			description: "Highlight all occurrences of simple variable (x + x + x)",
 		},
 
+		// Multi-byte characters before a multi-character identifier; see the
+		// matching case in TestReferences.
+		{
+			name:     "multibyte_before_ident",
+			file:     "testdata/document_highlight/multibyte_before_ident.cel",
+			position: protocol.Position{Line: 0, Character: 7},
+			expectedRanges: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 7}, End: protocol.Position{Line: 0, Character: 9}},
+				{Start: protocol.Position{Line: 0, Character: 12}, End: protocol.Position{Line: 0, Character: 14}},
+			},
+			description: "Highlight xy in ('éé' + xy + xy)",
+		},
+
 		// Loop variable highlights
 		{
 			name:     "map_loop_var_highlights",
@@ -96,8 +109,11 @@ func TestDocumentHighlight(t *testing.T) {
 
 			highlights := requestDocumentHighlight(t, conn, uri, tc.position)
 
-			// Verify exact count
-			ok.Equal(t, len(highlights), len(tc.expectedRanges))
+			// Verify exact count. Bail out on a mismatch: the position
+			// checks below index into both slices.
+			if !ok.Equal(t, len(highlights), len(tc.expectedRanges)) {
+				return
+			}
 
 			// Sort both slices for comparison (order not guaranteed)
 			actualRanges := make([]protocol.Range, len(highlights))
