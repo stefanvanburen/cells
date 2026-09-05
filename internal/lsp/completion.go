@@ -19,14 +19,12 @@ import (
 var celKeywords = []string{"true", "false", "null"}
 
 func (s *server) Completion(_ context.Context, params *protocol.CompletionParams) (protocol.CompletionResult, error) {
-	s.mu.Lock()
-	f := s.files[params.TextDocument.URI]
-	s.mu.Unlock()
+	f, docEnv := s.document(params.TextDocument.URI)
 
 	// Dot context: member completions filtered by receiver type.
 	if f != nil && isDotContext(f.content, params.Position) {
-		receiverType := receiverTypeAtDot(f.content, params.Position, s.celEnv)
-		items := memberCompletionItems(s.celEnv, receiverType)
+		receiverType := receiverTypeAtDot(f.content, params.Position, docEnv.celEnv)
+		items := memberCompletionItems(docEnv.celEnv, receiverType)
 		return &protocol.CompletionList{
 			IsIncomplete: false,
 			Items:        items,
@@ -36,13 +34,13 @@ func (s *server) Completion(_ context.Context, params *protocol.CompletionParams
 	// Check for operator context to filter by expected type.
 	var expectedType *types.Type
 	if f != nil {
-		expectedType = expectedTypeAfterOperator(f.content, params.Position, s.celEnv)
+		expectedType = expectedTypeAfterOperator(f.content, params.Position, docEnv.celEnv)
 	}
 
 	var items []protocol.CompletionItem
-	items = append(items, globalCompletionItems(s.celEnv, expectedType)...)
-	items = append(items, macroCompletionItems(s.celEnv, expectedType)...)
-	items = append(items, keywordCompletionItems(s.celEnv, expectedType)...)
+	items = append(items, globalCompletionItems(docEnv.celEnv, expectedType)...)
+	items = append(items, macroCompletionItems(docEnv.celEnv, expectedType)...)
+	items = append(items, keywordCompletionItems(docEnv.celEnv, expectedType)...)
 	return &protocol.CompletionList{
 		IsIncomplete: false,
 		Items:        items,

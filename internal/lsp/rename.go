@@ -40,27 +40,23 @@ type loopVarScope struct {
 func (loopVarScope) isScope() {}
 
 func (s *server) Rename(_ context.Context, params *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
-	s.mu.Lock()
-	f := s.files[params.TextDocument.URI]
-	s.mu.Unlock()
+	f, docEnv := s.document(params.TextDocument.URI)
 
 	if f == nil || f.content == "" {
 		return nil, nil
 	}
 
-	return computeRename(f, s.celEnv, *params)
+	return computeRename(f, docEnv.celEnv, *params)
 }
 
 func (s *server) PrepareRename(_ context.Context, params *protocol.PrepareRenameParams) (protocol.PrepareRenameResult, error) {
-	s.mu.Lock()
-	f := s.files[params.TextDocument.URI]
-	s.mu.Unlock()
+	f, docEnv := s.document(params.TextDocument.URI)
 
 	if f == nil || f.content == "" {
 		return nil, nil
 	}
 
-	return computePrepareRename(f, s.celEnv, params.Position)
+	return computePrepareRename(f, docEnv.celEnv, params.Position)
 }
 
 func computeRename(f *file, celEnv *cel.Env, params protocol.RenameParams) (*protocol.WorkspaceEdit, error) {

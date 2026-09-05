@@ -7,7 +7,9 @@ import (
 	"strings"
 	"testing"
 
+	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
+	"go.lsp.dev/uri"
 	"go.vanburen.xyz/cells/internal/lsp"
 	"go.vanburen.xyz/ok"
 )
@@ -21,13 +23,10 @@ func writeConfig(t *testing.T, yaml string) string {
 	return path
 }
 
-// loadOptions loads a configuration into Options, failing the test if it does
-// not load.
+// loadOptions writes a configuration and returns Options naming it.
 func loadOptions(t *testing.T, yaml string) lsp.Options {
 	t.Helper()
-	config, err := lsp.LoadConfig(writeConfig(t, yaml))
-	ok.MustNoError(t, err)
-	return lsp.Options{Config: config}
+	return lsp.Options{ConfigPath: writeConfig(t, yaml)}
 }
 
 func TestConfigDeclaresVariables(t *testing.T) {
@@ -313,4 +312,137 @@ func quote(s string) string {
 		panic(err)
 	}
 	return string(b)
+}
+
+// The server discovers a configuration for each document, so documents in
+// differently configured directories are checked against different
+// environments.
+func TestServerDiscoversConfigPerDocument(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	ok.MustNoError(t, os.WriteFile(filepath.Join(dir, lsp.ConfigFileName), []byte(`
+name: outer
+variables:
+  - name: count
+    type: "int"
+`), 0o600))
+	inner := filepath.Join(dir, "inner")
+	ok.MustNoError(t, os.MkdirAll(inner, 0o700))
+	ok.MustNoError(t, os.WriteFile(filepath.Join(inner, lsp.ConfigFileName), []byte(`
+name: inner
+variables:
+  - name: other
+    type: "int"
+`), 0o600))
+
+	conn := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{})
+	initializeServer(t, conn, "")
+
+	// The outer document sees "count"...
+	ok.Equal(t, len(openAndDiagnose(t, conn, filepath.Join(dir, "a.cel"), "count > 1")), 0)
+	// ...and the inner one does not, because its own configuration wins.
+	innerDiags := openAndDiagnose(t, conn, filepath.Join(inner, "b.cel"), "count > 1")
+	if ok.Equal(t, len(innerDiags), 1, ok.Sprintf("diagnostics: %v", innerDiags)) {
+		ok.True(t, strings.Contains(diagnosticMessage(innerDiags[0]), "count"),
+			ok.Sprintf("message: %v", innerDiags[0].Message))
+	}
+}
+
+// Editing a configuration takes effect without restarting the server: the
+// environment built from it is rebuilt when the file on disk changes.
+func TestServerReloadsChangedConfig(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, lsp.ConfigFileName)
+	ok.MustNoError(t, os.WriteFile(configPath, []byte("name: test\n"), 0o600))
+	celPath := filepath.Join(dir, "a.cel")
+
+	conn := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{})
+	initializeServer(t, conn, "")
+
+	// Nothing is declared yet.
+	diags := openAndDiagnose(t, conn, celPath, "count > 1")
+	ok.Equal(t, len(diags), 1, ok.Sprintf("diagnostics: %v", diags))
+
+	// Declare it, and ask again.
+	ok.MustNoError(t, os.WriteFile(configPath, []byte(`
+name: test
+variables:
+  - name: count
+    type: "int"
+`), 0o600))
+	diags = diagnoseOpen(t, conn, celPath)
+	ok.Equal(t, len(diags), 0, ok.Sprintf("diagnostics: %v", diags))
+}
+
+// A configuration that does not load is reported against the document that
+// depends on it, since nothing else in an editor would show it.
+func TestServerReportsBrokenConfig(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, lsp.ConfigFileName)
+	ok.MustNoError(t, os.WriteFile(configPath, []byte("name: [unterminated\n"), 0o600))
+
+	conn := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{})
+	initializeServer(t, conn, "")
+
+	diags := openAndDiagnose(t, conn, filepath.Join(dir, "a.cel"), "1 + 1")
+	if ok.Equal(t, len(diags), 1, ok.Sprintf("diagnostics: %v", diags)) {
+		ok.Equal(t, diags[0].Severity, protocol.DiagnosticSeverityError)
+		ok.True(t, strings.Contains(diagnosticMessage(diags[0]), configPath),
+			ok.Sprintf("message: %v", diags[0].Message))
+	}
+}
+
+// initializeServer completes the initialize handshake, sending initOptions as
+// raw initializationOptions JSON when it is not empty.
+func initializeServer(t *testing.T, conn jsonrpc2.Conn, initOptions string) {
+	t.Helper()
+
+	params := protocol.InitializeParams{}
+	if initOptions != "" {
+		params.InitializationOptions = protocol.LSPAny(initOptions)
+	}
+	var initResult protocol.InitializeResult
+	_, err := conn.Call(t.Context(), "initialize", params, &initResult)
+	ok.MustNoError(t, err)
+	ok.MustNoError(t, conn.Notify(t.Context(), "initialized", protocol.InitializedParams{}))
+}
+
+// openAndDiagnose opens a document at path holding content and returns the
+// diagnostics reported for it.
+func openAndDiagnose(t *testing.T, conn jsonrpc2.Conn, path, content string) []protocol.Diagnostic {
+	t.Helper()
+
+	err := conn.Notify(t.Context(), "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI:        uri.File(path),
+			LanguageID: "cel",
+			Version:    1,
+			Text:       content,
+		},
+	})
+	ok.MustNoError(t, err)
+	return diagnoseOpen(t, conn, path)
+}
+
+// diagnoseOpen pulls the diagnostics for an already-open document.
+func diagnoseOpen(t *testing.T, conn jsonrpc2.Conn, path string) []protocol.Diagnostic {
+	t.Helper()
+
+	var report protocol.RelatedFullDocumentDiagnosticReport
+	_, err := conn.Call(t.Context(), "textDocument/diagnostic", protocol.DocumentDiagnosticParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(path)},
+	}, &report)
+	ok.MustNoError(t, err)
+	return report.Items
+}
+
+// diagnosticMessage returns a diagnostic's message text.
+func diagnosticMessage(d protocol.Diagnostic) string {
+	message, _ := d.Message.(protocol.String)
+	return string(message)
 }

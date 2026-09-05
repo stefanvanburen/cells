@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -49,21 +50,41 @@ func rootCommand() *cli.Command {
 }
 
 // options builds the CEL environment options from the flags every command
-// shares. Extension names are validated here so that a misspelling is
-// reported against the flag rather than from inside the environment.
+// shares. Extension names are validated here so that a misspelling is reported
+// against the flag rather than from inside the environment, and a named
+// configuration is loaded here so that a bad one is reported once rather than
+// once per file.
 func options(s *cli.State) (lsp.Options, error) {
-	opts := lsp.Options{Extensions: cli.GetFlag[[]string](s, "ext")}
+	opts := lsp.Options{
+		Extensions: cli.GetFlag[[]string](s, "ext"),
+		ConfigPath: cli.GetFlag[string](s, "config"),
+	}
 	if err := lsp.ValidateExtensions(opts.Extensions); err != nil {
 		return lsp.Options{}, err
 	}
-	if path := cli.GetFlag[string](s, "config"); path != "" {
-		config, err := lsp.LoadConfig(path)
-		if err != nil {
+	if opts.ConfigPath != "" {
+		if _, err := lsp.LoadConfig(opts.ConfigPath); err != nil {
 			return lsp.Options{}, err
 		}
-		opts.Config = config
 	}
 	return opts, nil
+}
+
+// optionsFor returns opts as they apply to the named file. Without an explicit
+// --config, each file is checked against the nearest configuration above it,
+// so that one command can span directories that are configured differently.
+// filename may be "-", meaning stdin, which is searched for from the working
+// directory.
+func optionsFor(opts lsp.Options, filename string) lsp.Options {
+	if opts.ConfigPath != "" {
+		return opts
+	}
+	dir := "."
+	if filename != "-" {
+		dir = filepath.Dir(filename)
+	}
+	opts.ConfigPath = lsp.FindConfig(dir)
+	return opts
 }
 
 // exitError is returned by commands that want to exit with a specific code
@@ -132,7 +153,7 @@ func formatCommand() *cli.Command {
 						continue
 					}
 				}
-				formatted, err := lsp.Format(string(content), opts)
+				formatted, err := lsp.Format(string(content), optionsFor(opts, filename))
 				if err != nil {
 					fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
 					exitCode = 1
@@ -190,7 +211,7 @@ func checkCommand() *cli.Command {
 					exitCode = 1
 					continue
 				}
-				diags, err := lsp.Check(string(content), opts)
+				diags, err := lsp.Check(string(content), optionsFor(opts, filename))
 				if err != nil {
 					fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
 					exitCode = 1
@@ -230,7 +251,7 @@ func hoverCommand() *cli.Command {
 			if err != nil {
 				return fmt.Errorf("reading %s: %w", filename, err)
 			}
-			result, err := lsp.Hover(string(content), line, col, opts)
+			result, err := lsp.Hover(string(content), line, col, optionsFor(opts, filename))
 			if err != nil {
 				return fmt.Errorf("hover: %w", err)
 			}
@@ -263,7 +284,7 @@ func referencesCommand() *cli.Command {
 			if err != nil {
 				return fmt.Errorf("reading %s: %w", filename, err)
 			}
-			refs, err := lsp.References(string(content), line, col, opts)
+			refs, err := lsp.References(string(content), line, col, optionsFor(opts, filename))
 			if err != nil {
 				return fmt.Errorf("references: %w", err)
 			}
@@ -307,7 +328,7 @@ func renameCommand() *cli.Command {
 			if err != nil {
 				return fmt.Errorf("reading %s: %w", filename, err)
 			}
-			result, err := lsp.Rename(string(content), line, col, newName, opts)
+			result, err := lsp.Rename(string(content), line, col, newName, optionsFor(opts, filename))
 			if err != nil {
 				return fmt.Errorf("rename: %w", err)
 			}

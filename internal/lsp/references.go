@@ -8,15 +8,13 @@ import (
 )
 
 func (s *server) References(_ context.Context, params *protocol.ReferenceParams) ([]protocol.Location, error) {
-	s.mu.Lock()
-	f := s.files[params.TextDocument.URI]
-	s.mu.Unlock()
+	f, docEnv := s.document(params.TextDocument.URI)
 
 	if f == nil || f.content == "" {
 		return nil, nil
 	}
 
-	return computeReferences(f, s.celEnv, *params)
+	return computeReferences(f, docEnv.celEnv, *params)
 }
 
 func computeReferences(f *file, celEnv *cel.Env, params protocol.ReferenceParams) ([]protocol.Location, error) {

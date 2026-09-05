@@ -9,15 +9,13 @@ import (
 )
 
 func (s *server) Formatting(_ context.Context, params *protocol.DocumentFormattingParams) ([]protocol.TextEdit, error) {
-	s.mu.Lock()
-	f := s.files[params.TextDocument.URI]
-	s.mu.Unlock()
+	f, docEnv := s.document(params.TextDocument.URI)
 
 	if f == nil {
 		return nil, nil
 	}
 
-	formatted, err := formatCEL(f.content, s.celEnv)
+	formatted, err := formatCEL(f.content, docEnv.celEnv)
 	if err != nil {
 		// If formatting fails (e.g., parse error), return no edits.
 		return nil, nil

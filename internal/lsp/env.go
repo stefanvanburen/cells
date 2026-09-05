@@ -3,6 +3,7 @@ package lsp
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -25,11 +26,12 @@ const latestExtensionVersion = "latest"
 // The zero value is plain CEL with no declarations, which is what cells uses
 // when a user configures nothing.
 type Options struct {
-	// Config is a cel-go environment configuration, declaring the variables,
-	// types and functions that expressions may refer to. Load one from a file
-	// with LoadConfig. A nil Config means cells knows about nothing beyond the
-	// CEL standard library.
-	Config *env.Config
+	// ConfigPath names a CEL environment configuration file, declaring the
+	// variables, types and functions that expressions may refer to. An empty
+	// path means cells knows about nothing beyond the CEL standard library —
+	// callers that want a configuration found rather than named should look
+	// for one with FindConfig.
+	ConfigPath string
 
 	// Extensions names CEL extension libraries to enable on top of whatever
 	// Config asks for. See ExtensionNames for the valid names.
@@ -42,7 +44,33 @@ type Options struct {
 // to a real variable is undeclared, so the check phase cannot distinguish a
 // typo from a name cells was simply never told about.
 func (o Options) declared() bool {
-	return o.Config != nil
+	return o.ConfigPath != ""
+}
+
+// ConfigFileName is the file cells looks for when no configuration is named
+// explicitly.
+const ConfigFileName = "cel.yaml"
+
+// FindConfig returns the path of the nearest ConfigFileName in dir or one of
+// its parents, or "" when there is none. A configuration therefore covers the
+// directory tree beneath it, the way most per-repository tool configuration
+// does.
+func FindConfig(dir string) string {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return ""
+	}
+	for {
+		candidate := filepath.Join(dir, ConfigFileName)
+		if info, err := os.Stat(candidate); err == nil && !info.IsDir() {
+			return candidate
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return ""
+		}
+		dir = parent
+	}
 }
 
 // LoadConfig reads a CEL environment configuration from path. The format is
@@ -65,9 +93,13 @@ func LoadConfig(path string) (*env.Config, error) {
 
 // newCELEnv builds the CEL environment described by opts.
 func newCELEnv(opts Options) (*cel.Env, error) {
-	config := opts.Config
-	if config == nil {
-		config = env.NewConfig(serverName)
+	config := env.NewConfig(serverName)
+	if opts.ConfigPath != "" {
+		loaded, err := LoadConfig(opts.ConfigPath)
+		if err != nil {
+			return nil, err
+		}
+		config = loaded
 	}
 	if len(opts.Extensions) > 0 {
 		// Extensions named outside the configuration are added to it, so that

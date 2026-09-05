@@ -14,14 +14,12 @@ import (
 )
 
 func (s *server) SemanticTokensFull(_ context.Context, params *protocol.SemanticTokensParams) (*protocol.SemanticTokens, error) {
-	s.mu.Lock()
-	f := s.files[params.TextDocument.URI]
-	s.mu.Unlock()
+	f, docEnv := s.document(params.TextDocument.URI)
 
 	if f == nil {
 		return nil, nil
 	}
-	return computeSemanticTokens(f, s.celEnv)
+	return computeSemanticTokens(f, docEnv.celEnv)
 }
 
 // Semantic token types - indices into semanticTypeLegend.

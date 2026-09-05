@@ -22,22 +22,24 @@ type file struct {
 	// feature needs the same AST, and there is no point in redoing that work
 	// once per request against an unchanged document.
 	//
-	// celEnv is fixed for as long as a file value lives — the server settles
-	// on one during initialize, and the CLI builds a file per invocation — so
-	// these are not keyed by environment.
+	// Both are keyed by the environment they were produced under, since an
+	// extension can add macros the parser recognizes as well as declarations
+	// the checker needs. Reloading a configuration builds a new environment,
+	// which is what makes these caches fall away with it.
+	parsedEnv   *cel.Env
 	parsed      *cel.Ast
 	parseIssues *cel.Issues
-	parseDone   bool
+	checkedEnv  *cel.Env
 	checked     *cel.Ast
 	checkIssues *cel.Issues
-	checkDone   bool
 }
 
 // parse parses the file's content, returning the AST — nil if the content does
 // not parse — and the issues the parser reported.
 func (f *file) parse(celEnv *cel.Env) (*cel.Ast, *cel.Issues) {
-	if !f.parseDone {
-		f.parseDone = true
+	if f.parsedEnv != celEnv {
+		f.parsedEnv = celEnv
+		f.parsed = nil
 		parsed, issues := celEnv.Parse(f.content)
 		f.parseIssues = issues
 		if issues.Err() == nil {
@@ -51,8 +53,9 @@ func (f *file) parse(celEnv *cel.Env) (*cel.Ast, *cel.Issues) {
 // does not parse or does not type-check — and the issues the checker reported,
 // which are nil when the content never got as far as being checked.
 func (f *file) check(celEnv *cel.Env) (*cel.Ast, *cel.Issues) {
-	if !f.checkDone {
-		f.checkDone = true
+	if f.checkedEnv != celEnv {
+		f.checkedEnv = celEnv
+		f.checked, f.checkIssues = nil, nil
 		if parsed, _ := f.parse(celEnv); parsed != nil {
 			checked, issues := celEnv.Check(parsed)
 			f.checkIssues = issues

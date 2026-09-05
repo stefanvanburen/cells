@@ -16,15 +16,13 @@ import (
 var paddingLeft = true
 
 func (s *server) InlayHint(_ context.Context, params *protocol.InlayHintParams) ([]protocol.InlayHint, error) {
-	s.mu.Lock()
-	f := s.files[params.TextDocument.URI]
-	s.mu.Unlock()
+	f, docEnv := s.document(params.TextDocument.URI)
 
 	if f == nil || f.content == "" {
 		return []protocol.InlayHint{}, nil
 	}
 
-	hints, _ := computeInlayHints(f, s.celEnv)
+	hints, _ := computeInlayHints(f, docEnv.celEnv)
 
 	// Filter hints to only those within the requested range
 	var filtered []protocol.InlayHint

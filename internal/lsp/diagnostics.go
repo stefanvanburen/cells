@@ -26,7 +26,7 @@ func checkSeverity(opts Options) protocol.DiagnosticSeverity {
 }
 
 // publishDiagnostics computes and pushes diagnostics for the given file.
-func publishDiagnostics(ctx context.Context, f *file, celEnv *cel.Env, checkSeverity protocol.DiagnosticSeverity) {
+func (s *server) publishDiagnostics(ctx context.Context, f *file) {
 	client, ok := protocol.ClientFromContext(ctx)
 	if !ok {
 		return
@@ -34,24 +34,37 @@ func publishDiagnostics(ctx context.Context, f *file, celEnv *cel.Env, checkSeve
 	_ = client.PublishDiagnostics(ctx, &protocol.PublishDiagnosticsParams{
 		URI:         f.uri,
 		Version:     protocol.NewOptional(f.version),
-		Diagnostics: computeDiagnostics(f, celEnv, checkSeverity),
+		Diagnostics: s.diagnosticsFor(f),
 	})
 }
 
 // Diagnostic handles the pull diagnostic request (textDocument/diagnostic).
 func (s *server) Diagnostic(_ context.Context, params *protocol.DocumentDiagnosticParams) (protocol.DocumentDiagnosticReport, error) {
-	s.mu.Lock()
-	f := s.files[params.TextDocument.URI]
-	s.mu.Unlock()
-
 	items := []protocol.Diagnostic{}
-	if f != nil {
-		items = computeDiagnostics(f, s.celEnv, s.checkSeverity)
+	if f, _ := s.document(params.TextDocument.URI); f != nil {
+		items = s.diagnosticsFor(f)
 	}
 	return &protocol.RelatedFullDocumentDiagnosticReport{
 		Kind:  string(protocol.DocumentDiagnosticReportKindFull),
 		Items: items,
 	}, nil
+}
+
+// diagnosticsFor returns the diagnostics for an open document, which are the
+// configuration's own if it does not load: an expression cannot be judged
+// against an environment cells could not build, and a configuration error is
+// otherwise invisible from inside an editor.
+func (s *server) diagnosticsFor(f *file) []protocol.Diagnostic {
+	docEnv, err := s.envs.forDocument(f.uri)
+	if err != nil {
+		return []protocol.Diagnostic{{
+			Range:    protocol.Range{},
+			Severity: protocol.DiagnosticSeverityError,
+			Source:   protocol.NewOptional(serverName),
+			Message:  protocol.String(err.Error()),
+		}}
+	}
+	return computeDiagnostics(f, docEnv.celEnv, docEnv.checkSeverity)
 }
 
 // computeDiagnostics parses and type-checks a CEL file, returning LSP

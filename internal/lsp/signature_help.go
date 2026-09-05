@@ -11,15 +11,13 @@ import (
 )
 
 func (s *server) SignatureHelp(_ context.Context, params *protocol.SignatureHelpParams) (*protocol.SignatureHelp, error) {
-	s.mu.Lock()
-	f := s.files[params.TextDocument.URI]
-	s.mu.Unlock()
+	f, docEnv := s.document(params.TextDocument.URI)
 
 	if f == nil || f.content == "" {
 		return nil, nil
 	}
 
-	return computeSignatureHelp(f, s.celEnv, params.Position)
+	return computeSignatureHelp(f, docEnv.celEnv, params.Position)
 }
 
 func computeSignatureHelp(f *file, celEnv *cel.Env, pos protocol.Position) (*protocol.SignatureHelp, error) {

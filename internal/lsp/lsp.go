@@ -14,7 +14,6 @@ import (
 	"sync"
 	"sync/atomic"
 
-	"cel.dev/cel-go/cel"
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
@@ -130,14 +129,14 @@ type server struct {
 	mu    sync.Mutex
 	files map[uri.URI]*file
 
-	// celEnv and checkSeverity are written once, by Initialize, and only read
-	// afterwards. They are deliberately not guarded by mu — none of their
-	// readers take the lock either. What makes that safe is ServeStream's
-	// synchronous dispatch: every handler runs on one goroutine in wire order,
-	// and the LSP spec puts initialize before any other request. Introducing
-	// an async handler would invalidate this.
-	celEnv        *cel.Env
-	checkSeverity protocol.DiagnosticSeverity
+	// envs holds the CEL environment for each configuration in use. It is
+	// written by Initialize and mutated as documents are seen, and is
+	// deliberately not guarded by mu — neither it nor its readers take the
+	// lock. What makes that safe is ServeStream's synchronous dispatch: every
+	// handler runs on one goroutine in wire order, and the LSP spec puts
+	// initialize before any other request. Introducing an async handler would
+	// invalidate this.
+	envs *envCache
 
 	// startOpts are the options the server was started with, which
 	// initializationOptions overrides key by key.
@@ -147,22 +146,45 @@ type server struct {
 }
 
 func newServer(opts Options) (*server, error) {
-	s := &server{files: make(map[uri.URI]*file), startOpts: opts}
-	if err := s.setEnv(opts); err != nil {
-		return nil, err
+	s := &server{
+		files:     make(map[uri.URI]*file),
+		startOpts: opts,
 	}
-	return s, nil
+	return s, s.setEnv(opts)
 }
 
-// setEnv installs the CEL environment described by opts.
+// setEnv installs the environment the server builds from, discarding anything
+// it had cached against the previous one. An opts.ConfigPath applies to every
+// document; without one, each document uses the nearest configuration above it.
 func (s *server) setEnv(opts Options) error {
-	celEnv, err := newCELEnv(opts)
-	if err != nil {
+	envs := newEnvCache(opts)
+	// Build the named environment now so that a configuration or extension the
+	// server cannot use is reported from initialize, where a client will show
+	// it, rather than from the first request that happens to need it.
+	if _, err := envs.forPath(opts.ConfigPath); err != nil {
 		return fmt.Errorf("failed to create CEL environment: %w", err)
 	}
-	s.celEnv = celEnv
-	s.checkSeverity = checkSeverity(opts)
+	s.envs = envs
 	return nil
+}
+
+// document returns the open document at docURI along with the CEL environment
+// that governs it. It returns a nil file when there is no such document, and a
+// nil environment when the configuration covering it does not load — features
+// other than diagnostics have nothing useful to say in that case.
+func (s *server) document(docURI uri.URI) (*file, *environment) {
+	s.mu.Lock()
+	f := s.files[docURI]
+	s.mu.Unlock()
+
+	if f == nil {
+		return nil, nil
+	}
+	docEnv, err := s.envs.forDocument(docURI)
+	if err != nil {
+		return f, nil
+	}
+	return f, docEnv
 }
 
 // clientInitializationOptions is the shape cells reads out of the LSP
@@ -236,14 +258,7 @@ func (s *server) applyInitializationOptions(raw json.RawMessage) error {
 		opts.Extensions = clientOpts.Extensions
 	}
 	if clientOpts.Config != nil {
-		opts.Config = nil
-		if path := *clientOpts.Config; path != "" {
-			config, err := LoadConfig(path)
-			if err != nil {
-				return err
-			}
-			opts.Config = config
-		}
+		opts.ConfigPath = *clientOpts.Config
 	}
 	return s.setEnv(opts)
 }
@@ -286,7 +301,7 @@ func (s *server) DidOpen(ctx context.Context, params *protocol.DidOpenTextDocume
 	s.files[f.uri] = f
 	s.mu.Unlock()
 
-	publishDiagnostics(ctx, f, s.celEnv, s.checkSeverity)
+	s.publishDiagnostics(ctx, f)
 	return nil
 }
 
@@ -321,7 +336,7 @@ func (s *server) DidChange(ctx context.Context, params *protocol.DidChangeTextDo
 	s.files[f.uri] = f
 	s.mu.Unlock()
 
-	publishDiagnostics(ctx, f, s.celEnv, s.checkSeverity)
+	s.publishDiagnostics(ctx, f)
 	return nil
 }
 

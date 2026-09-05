@@ -114,6 +114,16 @@ variables:
 $ cells check --config=cel.yaml policy.cel
 ```
 
+`cells` finds `cel.yaml` on its own: with no `--config`, it looks in the
+directory of each file being checked and then in each parent, so a
+configuration covers the tree beneath it and a repository with differently
+configured subdirectories works without any flags. The nearest one wins, and
+`--config` overrides the search entirely.
+
+The language server discovers a configuration per document the same way, and
+picks up edits to it without a restart. A configuration that fails to load is
+reported as a diagnostic on the files that depend on it.
+
 With the environment declared, a genuine mistake is an error rather than a
 warning lost among undeclared references:
 
@@ -123,8 +133,8 @@ $ cells check --config=cel.yaml bad.cel
 bad.cel:1:9: error: found no matching overload for '+' applied to '(int, string)'
 ```
 
-`--config` applies to every command. For the language server, set `config` in
-your editor's `initializationOptions`:
+`--config` applies to every command. To name one explicitly for the language
+server, set `config` in your editor's `initializationOptions`:
 
 ```json
 { "config": "/path/to/cel.yaml" }

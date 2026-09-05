@@ -16,15 +16,13 @@ import (
 )
 
 func (s *server) Hover(_ context.Context, params *protocol.HoverParams) (*protocol.Hover, error) {
-	s.mu.Lock()
-	f := s.files[params.TextDocument.URI]
-	s.mu.Unlock()
+	f, docEnv := s.document(params.TextDocument.URI)
 
 	if f == nil || f.content == "" {
 		return nil, nil
 	}
 
-	return computeHover(f, s.celEnv, params.Position)
+	return computeHover(f, docEnv.celEnv, params.Position)
 }
 
 // hoverInfo represents hover documentation for a CEL element.
