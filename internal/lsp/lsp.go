@@ -237,29 +237,37 @@ func (s *server) Exit(context.Context) error {
 }
 
 func (s *server) DidOpen(ctx context.Context, params *protocol.DidOpenTextDocumentParams) error {
-	s.mu.Lock()
 	f := &file{
 		uri:     params.TextDocument.URI,
 		version: params.TextDocument.Version,
 		content: params.TextDocument.Text,
 	}
-	s.files[params.TextDocument.URI] = f
-	docURI, version, content := f.uri, f.version, f.content
+
+	s.mu.Lock()
+	s.files[f.uri] = f
 	s.mu.Unlock()
 
-	publishDiagnostics(ctx, docURI, version, content, s.celEnv)
+	publishDiagnostics(ctx, f, s.celEnv)
 	return nil
 }
 
 func (s *server) DidChange(ctx context.Context, params *protocol.DidChangeTextDocumentParams) error {
 	s.mu.Lock()
-	f := s.files[params.TextDocument.URI]
-	if f == nil {
-		s.mu.Unlock()
+	prev := s.files[params.TextDocument.URI]
+	s.mu.Unlock()
+
+	if prev == nil {
 		return fmt.Errorf("received update for file that was not open: %q", params.TextDocument.URI)
 	}
-	f.version = params.TextDocument.Version
 
+	// A file is never written to in place: replacing it leaves any handler
+	// that already took the old value with a consistent document, and drops
+	// the parse cached against the old content.
+	f := &file{
+		uri:     prev.uri,
+		version: params.TextDocument.Version,
+		content: prev.content,
+	}
 	// We use full sync mode, so extract full text from content changes.
 	if len(params.ContentChanges) > 0 {
 		switch c := params.ContentChanges[0].(type) {
@@ -269,10 +277,12 @@ func (s *server) DidChange(ctx context.Context, params *protocol.DidChangeTextDo
 			f.content = c.Text
 		}
 	}
-	docURI, version, content := f.uri, f.version, f.content
+
+	s.mu.Lock()
+	s.files[f.uri] = f
 	s.mu.Unlock()
 
-	publishDiagnostics(ctx, docURI, version, content, s.celEnv)
+	publishDiagnostics(ctx, f, s.celEnv)
 	return nil
 }
 

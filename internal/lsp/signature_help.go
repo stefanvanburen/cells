@@ -23,12 +23,10 @@ func (s *server) SignatureHelp(_ context.Context, params *protocol.SignatureHelp
 }
 
 func computeSignatureHelp(f *file, celEnv *cel.Env, pos protocol.Position) (*protocol.SignatureHelp, error) {
-	parsed, issues := celEnv.Parse(f.content)
-	if issues.Err() != nil {
+	nativeAST := f.ast(celEnv)
+	if nativeAST == nil {
 		return nil, nil
 	}
-
-	nativeAST := parsed.NativeRep()
 	sourceInfo := nativeAST.SourceInfo()
 
 	// Convert the LSP position (line, UTF-16 col) to a byte offset.

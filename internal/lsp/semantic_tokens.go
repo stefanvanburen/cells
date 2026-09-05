@@ -138,13 +138,10 @@ func computeSemanticTokens(f *file, celEnv *cel.Env) (*protocol.SemanticTokens, 
 		})
 	}
 
-	// Parse the CEL expression
-	parsed, issues := celEnv.Parse(f.content)
-	if issues.Err() != nil {
+	nativeAST := f.ast(celEnv)
+	if nativeAST == nil {
 		return nil, nil
 	}
-
-	nativeAST := parsed.NativeRep()
 	sourceInfo := nativeAST.SourceInfo()
 
 	// Walk the CEL AST and collect tokens

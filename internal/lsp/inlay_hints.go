@@ -43,14 +43,10 @@ func computeInlayHints(f *file, celEnv *cel.Env) ([]protocol.InlayHint, error) {
 		return []protocol.InlayHint{}, nil
 	}
 
-	parsed, issues := celEnv.Parse(f.content)
-	if issues.Err() != nil {
-		return []protocol.InlayHint{}, nil
-	}
-
-	// Type-check to ensure the expression is valid and get the type.
-	checked, checkIssues := celEnv.Check(parsed)
-	if checkIssues.Err() != nil {
+	// A hint only makes sense for an expression that type-checks, since the
+	// hint is its evaluated value.
+	checked, _ := f.check(celEnv)
+	if checked == nil {
 		return []protocol.InlayHint{}, nil
 	}
 

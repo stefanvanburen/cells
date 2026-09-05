@@ -63,6 +63,10 @@ func Format(content string, extensions ...string) (string, error) {
 	return formatCEL(content, env)
 }
 
+// cliURI stands in for a document URI when these entry points are called from
+// the command line, where there is no editor and no open document.
+const cliURI = "file:///cli"
+
 // CheckDiagnostic represents a single diagnostic from parsing or type-checking.
 type CheckDiagnostic struct {
 	Line     int    // 1-indexed
@@ -79,7 +83,7 @@ func Check(content string, extensions ...string) ([]CheckDiagnostic, error) {
 	if err != nil {
 		return nil, err
 	}
-	diags := computeDiagnostics(content, env)
+	diags := computeDiagnostics(&file{uri: cliURI, content: content}, env)
 	result := make([]CheckDiagnostic, 0, len(diags))
 	for _, d := range diags {
 		sev := "error"
@@ -106,7 +110,7 @@ func Hover(content string, line, col int, extensions ...string) (string, error) 
 	if err != nil {
 		return "", err
 	}
-	f := &file{uri: "file:///cli", content: content}
+	f := &file{uri: cliURI, content: content}
 	result, err := computeHover(f, env, protocol.Position{
 		Line:      uint32(line - 1),
 		Character: uint32(col - 1),
@@ -135,7 +139,7 @@ func References(content string, line, col int, extensions ...string) ([]Referenc
 	if err != nil {
 		return nil, err
 	}
-	f := &file{uri: "file:///cli", content: content}
+	f := &file{uri: cliURI, content: content}
 	locs, err := computeReferences(f, env, protocol.ReferenceParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: f.uri},
 		Position: protocol.Position{
@@ -165,7 +169,7 @@ func Rename(content string, line, col int, newName string, extensions ...string)
 	if err != nil {
 		return "", err
 	}
-	f := &file{uri: "file:///cli", content: content}
+	f := &file{uri: cliURI, content: content}
 	edit, err := computeRename(f, env, protocol.RenameParams{
 		TextDocument: protocol.TextDocumentIdentifier{URI: f.uri},
 		Position: protocol.Position{

@@ -8,20 +8,18 @@ import (
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common/operators"
 	"go.lsp.dev/protocol"
-	"go.lsp.dev/uri"
 )
 
 // publishDiagnostics computes and pushes diagnostics for the given file.
-func publishDiagnostics(ctx context.Context, docURI uri.URI, version int32, content string, celEnv *cel.Env) {
+func publishDiagnostics(ctx context.Context, f *file, celEnv *cel.Env) {
 	client, ok := protocol.ClientFromContext(ctx)
 	if !ok {
 		return
 	}
-	diagnostics := computeDiagnostics(content, celEnv)
 	_ = client.PublishDiagnostics(ctx, &protocol.PublishDiagnosticsParams{
-		URI:         docURI,
-		Version:     protocol.NewOptional(version),
-		Diagnostics: diagnostics,
+		URI:         f.uri,
+		Version:     protocol.NewOptional(f.version),
+		Diagnostics: computeDiagnostics(f, celEnv),
 	})
 }
 
@@ -29,41 +27,29 @@ func publishDiagnostics(ctx context.Context, docURI uri.URI, version int32, cont
 func (s *server) Diagnostic(_ context.Context, params *protocol.DocumentDiagnosticParams) (protocol.DocumentDiagnosticReport, error) {
 	s.mu.Lock()
 	f := s.files[params.TextDocument.URI]
-	var content string
-	if f != nil {
-		content = f.content
-	}
 	s.mu.Unlock()
 
-	if f == nil {
-		return &protocol.RelatedFullDocumentDiagnosticReport{
-			Kind:  string(protocol.DocumentDiagnosticReportKindFull),
-			Items: []protocol.Diagnostic{},
-		}, nil
+	items := []protocol.Diagnostic{}
+	if f != nil {
+		items = computeDiagnostics(f, s.celEnv)
 	}
-
 	return &protocol.RelatedFullDocumentDiagnosticReport{
 		Kind:  string(protocol.DocumentDiagnosticReportKindFull),
-		Items: computeDiagnostics(content, s.celEnv),
+		Items: items,
 	}, nil
 }
 
 // computeDiagnostics parses and type-checks a CEL file, returning LSP diagnostics.
-func computeDiagnostics(content string, celEnv *cel.Env) []protocol.Diagnostic {
-	if strings.TrimSpace(content) == "" {
+func computeDiagnostics(f *file, celEnv *cel.Env) []protocol.Diagnostic {
+	if strings.TrimSpace(f.content) == "" {
 		return []protocol.Diagnostic{}
 	}
 
-	// Parse phase.
-	parsed, parseIssues := celEnv.Parse(content)
-	if parseIssues.Err() != nil {
-		return issuesToDiagnostics(content, parseIssues, protocol.DiagnosticSeverityError)
+	if parsed, parseIssues := f.parse(celEnv); parsed == nil {
+		return issuesToDiagnostics(f.content, parseIssues, protocol.DiagnosticSeverityError)
 	}
-
-	// Check (type-check) phase.
-	_, checkIssues := celEnv.Check(parsed)
-	if checkIssues.Err() != nil {
-		return issuesToDiagnostics(content, checkIssues, protocol.DiagnosticSeverityWarning)
+	if checked, checkIssues := f.check(celEnv); checked == nil {
+		return issuesToDiagnostics(f.content, checkIssues, protocol.DiagnosticSeverityWarning)
 	}
 
 	// No errors — clear diagnostics.
