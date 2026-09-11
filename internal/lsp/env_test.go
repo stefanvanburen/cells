@@ -377,6 +377,54 @@ variables:
 	ok.Equal(t, len(diags), 0, ok.Sprintf("diagnostics: %v", diags))
 }
 
+// Diagnostics already published are made good when the configuration they were
+// judged against is edited, without the document itself being touched: the
+// editor is left showing errors for a name the configuration now declares
+// otherwise.
+func TestServerRefreshesDiagnosticsAfterConfigChange(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, lsp.ConfigFileName)
+	ok.MustNoError(t, os.WriteFile(configPath, []byte("name: test\n"), 0o600))
+	celPath := filepath.Join(dir, "a.cel")
+	celURI := uri.File(celPath)
+
+	dc := newDiagnosticCollector()
+	conn := newLSPClient(t, dc, lsp.Options{})
+	initializeServer(t, conn, "")
+
+	ok.MustNoError(t, conn.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI: celURI, LanguageID: "cel", Version: 1, Text: "count > 1",
+		},
+	}))
+	dc.waitForDiagnostics(t, 1)
+	ok.Equal(t, len(dc.latest().Diagnostics), 1, ok.Sprintf("diagnostics: %v", dc.latest().Diagnostics))
+
+	ok.MustNoError(t, os.WriteFile(configPath, []byte(`
+name: test
+variables:
+  - name: count
+    type: "int"
+`), 0o600))
+
+	// Any request that resolves the document's environment notices the edit.
+	// This one is the request an editor makes without being asked, as soon as
+	// the file is on screen again.
+	var tokens protocol.SemanticTokens
+	_, err := conn.Call(ctx, "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: celURI},
+	}, &tokens)
+	ok.MustNoError(t, err)
+
+	dc.waitForDiagnostics(t, 2)
+	params := dc.latest()
+	ok.Equal(t, string(params.URI), string(celURI))
+	ok.Equal(t, len(params.Diagnostics), 0, ok.Sprintf("diagnostics: %v", params.Diagnostics))
+}
+
 // A configuration that does not load is reported against the document that
 // depends on it, since nothing else in an editor would show it.
 func TestServerReportsBrokenConfig(t *testing.T) {

@@ -59,9 +59,9 @@ func (s *server) clearDiagnostics(ctx context.Context, docURI uri.URI) {
 }
 
 // Diagnostic handles the pull diagnostic request (textDocument/diagnostic).
-func (s *server) Diagnostic(_ context.Context, params *protocol.DocumentDiagnosticParams) (protocol.DocumentDiagnosticReport, error) {
+func (s *server) Diagnostic(ctx context.Context, params *protocol.DocumentDiagnosticParams) (protocol.DocumentDiagnosticReport, error) {
 	items := []protocol.Diagnostic{}
-	if f, _ := s.document(params.TextDocument.URI); f != nil {
+	if f, _ := s.document(ctx, params.TextDocument.URI); f != nil {
 		items = s.diagnosticsFor(f)
 	}
 	return &protocol.RelatedFullDocumentDiagnosticReport{

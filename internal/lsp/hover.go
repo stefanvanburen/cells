@@ -16,8 +16,8 @@ import (
 	"go.lsp.dev/protocol"
 )
 
-func (s *server) Hover(_ context.Context, params *protocol.HoverParams) (*protocol.Hover, error) {
-	f, docEnv := s.document(params.TextDocument.URI)
+func (s *server) Hover(ctx context.Context, params *protocol.HoverParams) (*protocol.Hover, error) {
+	f, docEnv := s.document(ctx, params.TextDocument.URI)
 
 	if f == nil || docEnv == nil || f.content == "" {
 		return nil, nil

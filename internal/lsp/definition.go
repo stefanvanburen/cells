@@ -13,8 +13,8 @@ import (
 	"go.yaml.in/yaml/v3"
 )
 
-func (s *server) Definition(_ context.Context, params *protocol.DefinitionParams) (protocol.DefinitionResult, error) {
-	f, docEnv := s.document(params.TextDocument.URI)
+func (s *server) Definition(ctx context.Context, params *protocol.DefinitionParams) (protocol.DefinitionResult, error) {
+	f, docEnv := s.document(ctx, params.TextDocument.URI)
 	if f == nil || docEnv == nil || f.content == "" {
 		return nil, nil
 	}

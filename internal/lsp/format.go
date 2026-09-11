@@ -8,8 +8,8 @@ import (
 	"go.lsp.dev/protocol"
 )
 
-func (s *server) Formatting(_ context.Context, params *protocol.DocumentFormattingParams) ([]protocol.TextEdit, error) {
-	f, docEnv := s.document(params.TextDocument.URI)
+func (s *server) Formatting(ctx context.Context, params *protocol.DocumentFormattingParams) ([]protocol.TextEdit, error) {
+	f, docEnv := s.document(ctx, params.TextDocument.URI)
 
 	if f == nil || docEnv == nil {
 		return nil, nil

@@ -39,8 +39,8 @@ type loopVarScope struct {
 
 func (loopVarScope) isScope() {}
 
-func (s *server) Rename(_ context.Context, params *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
-	f, docEnv := s.document(params.TextDocument.URI)
+func (s *server) Rename(ctx context.Context, params *protocol.RenameParams) (*protocol.WorkspaceEdit, error) {
+	f, docEnv := s.document(ctx, params.TextDocument.URI)
 
 	if f == nil || docEnv == nil || f.content == "" {
 		return nil, nil
@@ -49,8 +49,8 @@ func (s *server) Rename(_ context.Context, params *protocol.RenameParams) (*prot
 	return computeRename(f, docEnv.celEnv, *params)
 }
 
-func (s *server) PrepareRename(_ context.Context, params *protocol.PrepareRenameParams) (protocol.PrepareRenameResult, error) {
-	f, docEnv := s.document(params.TextDocument.URI)
+func (s *server) PrepareRename(ctx context.Context, params *protocol.PrepareRenameParams) (protocol.PrepareRenameResult, error) {
+	f, docEnv := s.document(ctx, params.TextDocument.URI)
 
 	if f == nil || docEnv == nil || f.content == "" {
 		return nil, nil

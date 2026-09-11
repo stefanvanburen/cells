@@ -15,8 +15,8 @@ import (
 // avoid allocating a *bool per hint.
 var paddingLeft = true
 
-func (s *server) InlayHint(_ context.Context, params *protocol.InlayHintParams) ([]protocol.InlayHint, error) {
-	f, docEnv := s.document(params.TextDocument.URI)
+func (s *server) InlayHint(ctx context.Context, params *protocol.InlayHintParams) ([]protocol.InlayHint, error) {
+	f, docEnv := s.document(ctx, params.TextDocument.URI)
 
 	if f == nil || docEnv == nil || f.content == "" {
 		return []protocol.InlayHint{}, nil

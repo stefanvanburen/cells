@@ -7,8 +7,8 @@ import (
 	"go.lsp.dev/protocol"
 )
 
-func (s *server) DocumentHighlight(_ context.Context, params *protocol.DocumentHighlightParams) ([]protocol.DocumentHighlight, error) {
-	f, docEnv := s.document(params.TextDocument.URI)
+func (s *server) DocumentHighlight(ctx context.Context, params *protocol.DocumentHighlightParams) ([]protocol.DocumentHighlight, error) {
+	f, docEnv := s.document(ctx, params.TextDocument.URI)
 
 	if f == nil || docEnv == nil || f.content == "" {
 		return nil, nil

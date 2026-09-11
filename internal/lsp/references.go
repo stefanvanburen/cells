@@ -7,8 +7,8 @@ import (
 	"go.lsp.dev/protocol"
 )
 
-func (s *server) References(_ context.Context, params *protocol.ReferenceParams) ([]protocol.Location, error) {
-	f, docEnv := s.document(params.TextDocument.URI)
+func (s *server) References(ctx context.Context, params *protocol.ReferenceParams) ([]protocol.Location, error) {
+	f, docEnv := s.document(ctx, params.TextDocument.URI)
 
 	if f == nil || docEnv == nil || f.content == "" {
 		return nil, nil

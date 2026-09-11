@@ -13,8 +13,8 @@ import (
 	"go.lsp.dev/protocol"
 )
 
-func (s *server) SemanticTokensFull(_ context.Context, params *protocol.SemanticTokensParams) (*protocol.SemanticTokens, error) {
-	f, docEnv := s.document(params.TextDocument.URI)
+func (s *server) SemanticTokensFull(ctx context.Context, params *protocol.SemanticTokensParams) (*protocol.SemanticTokens, error) {
+	f, docEnv := s.document(ctx, params.TextDocument.URI)
 
 	if f == nil || docEnv == nil {
 		return nil, nil

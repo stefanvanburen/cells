@@ -18,8 +18,8 @@ import (
 // constants that aren't discoverable through cel-go's function or macro APIs.
 var celKeywords = []string{"true", "false", "null"}
 
-func (s *server) Completion(_ context.Context, params *protocol.CompletionParams) (protocol.CompletionResult, error) {
-	f, docEnv := s.document(params.TextDocument.URI)
+func (s *server) Completion(ctx context.Context, params *protocol.CompletionParams) (protocol.CompletionResult, error) {
+	f, docEnv := s.document(ctx, params.TextDocument.URI)
 	if docEnv == nil {
 		// The configuration covering this document does not load, so there is
 		// no environment to complete against. Diagnostics report why.

@@ -10,8 +10,8 @@ import (
 	"go.lsp.dev/protocol"
 )
 
-func (s *server) SignatureHelp(_ context.Context, params *protocol.SignatureHelpParams) (*protocol.SignatureHelp, error) {
-	f, docEnv := s.document(params.TextDocument.URI)
+func (s *server) SignatureHelp(ctx context.Context, params *protocol.SignatureHelpParams) (*protocol.SignatureHelp, error) {
+	f, docEnv := s.document(ctx, params.TextDocument.URI)
 
 	if f == nil || docEnv == nil || f.content == "" {
 		return nil, nil

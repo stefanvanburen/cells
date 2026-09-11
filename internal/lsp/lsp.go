@@ -144,6 +144,11 @@ type server struct {
 	// initializationOptions overrides key by key.
 	startOpts Options
 
+	// publishedGeneration is the envCache generation the diagnostics the
+	// client is currently showing were computed under. It is read and written
+	// on the same terms as envs itself.
+	publishedGeneration uint64
+
 	shutdown atomic.Bool // set by Shutdown; read by Exit to pick its process exit code
 }
 
@@ -174,7 +179,10 @@ func (s *server) setEnv(opts Options) error {
 // that governs it. It returns a nil file when there is no such document, and a
 // nil environment when the configuration covering it does not load — features
 // other than diagnostics have nothing useful to say in that case.
-func (s *server) document(docURI uri.URI) (*file, *environment) {
+//
+// Resolving the environment is what notices an edit to a configuration, so
+// this is also where diagnostics published against the old one are made good.
+func (s *server) document(ctx context.Context, docURI uri.URI) (*file, *environment) {
 	s.mu.Lock()
 	f := s.files[docURI]
 	s.mu.Unlock()
@@ -183,10 +191,41 @@ func (s *server) document(docURI uri.URI) (*file, *environment) {
 		return nil, nil
 	}
 	docEnv, err := s.envs.forDocument(docURI)
+	s.refreshDiagnostics(ctx)
 	if err != nil {
 		return f, nil
 	}
 	return f, docEnv
+}
+
+// refreshDiagnostics republishes every open document's diagnostics when an
+// environment has been rebuilt since the last time they were published.
+//
+// Diagnostics are pushed, and only on open and on change. Editing a cel.yaml
+// is neither: the document the edit invalidates is not itself being edited, so
+// without this its errors would stand until the next keystroke in it, long
+// after hover and completion had moved on to the new configuration.
+//
+// Every open document is refreshed rather than only those the rebuilt
+// configuration governs. Working out which those are costs a search up the
+// tree per document, and a document whose environment did not change still has
+// its parse and type-check cached against it, so publishing again is close to
+// free.
+func (s *server) refreshDiagnostics(ctx context.Context) {
+	if s.envs.generation == s.publishedGeneration {
+		return
+	}
+	// Recorded before publishing, so that a rebuild triggered by the refresh
+	// itself is picked up by the next request rather than recursed into.
+	s.publishedGeneration = s.envs.generation
+
+	s.mu.Lock()
+	open := slices.Collect(maps.Values(s.files))
+	s.mu.Unlock()
+
+	for _, f := range open {
+		s.publishDiagnostics(ctx, f)
+	}
 }
 
 // clientInitializationOptions is the shape cells reads out of the LSP

@@ -94,6 +94,11 @@ type envCache struct {
 	opts Options
 
 	byPath map[string]*environment
+
+	// generation counts the environments this cache has built. A request that
+	// rebuilds one bumps it, which is how the server notices that what it has
+	// already published was judged against an environment that is now gone.
+	generation uint64
 }
 
 func newEnvCache(opts Options) *envCache {
@@ -165,6 +170,7 @@ func (c *envCache) forPath(configPath string) (*environment, error) {
 	}
 	built.stamp = stamp
 
+	c.generation++
 	c.byPath[configPath] = built
 	return built, nil
 }
