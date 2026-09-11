@@ -3,6 +3,7 @@ package lsp
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"time"
 
 	"cel.dev/cel-go/cel"
@@ -26,10 +27,10 @@ type environment struct {
 	fieldDocs map[string]string
 
 	// configPath is the configuration this environment was built from, or ""
-	// when it was built from none. stamp is what that file looked like at the
-	// time, so that a later edit to it is noticed.
+	// when it was built from none. stamp is what the files behind it looked
+	// like at the time, so that a later edit to one of them is noticed.
 	configPath string
-	stamp      fileStamp
+	stamp      inputStamp
 }
 
 // fieldDoc returns the documentation the .proto file carried for a field of
@@ -65,8 +66,22 @@ func statStamp(path string) fileStamp {
 	return fileStamp{modTime: info.ModTime(), size: info.Size()}
 }
 
+// inputStamp is what every file an environment was built from looked like at
+// the time: the configuration, and each descriptor set named alongside it. A
+// descriptor set is regenerated at least as often as a configuration is
+// edited, so watching only the configuration left a rebuilt set invisible
+// until the server was restarted.
+type inputStamp struct {
+	config      fileStamp
+	descriptors []fileStamp
+}
+
+func (s inputStamp) equal(other inputStamp) bool {
+	return s.config == other.config && slices.Equal(s.descriptors, other.descriptors)
+}
+
 // envCache builds the CEL environment for each configuration in use and reuses
-// it, rebuilding when the configuration file changes on disk.
+// it, rebuilding when a file it was built from changes on disk.
 //
 // It is not guarded by a lock: like the rest of the server's state it relies on
 // ServeStream's synchronous dispatch, which runs every handler on one
@@ -86,6 +101,18 @@ func newEnvCache(opts Options) *envCache {
 		opts:   opts,
 		byPath: make(map[string]*environment),
 	}
+}
+
+// statInputs stamps every file the environment for configPath is built from.
+func (c *envCache) statInputs(configPath string) inputStamp {
+	stamp := inputStamp{
+		config:      statStamp(configPath),
+		descriptors: make([]fileStamp, len(c.opts.DescriptorSets)),
+	}
+	for i, path := range c.opts.DescriptorSets {
+		stamp.descriptors[i] = statStamp(path)
+	}
+	return stamp
 }
 
 // forDocument returns the environment that applies to the document at uri,
@@ -125,8 +152,8 @@ func (c *envCache) retain(inUse map[string]bool) {
 // forPath returns the environment built from the configuration at configPath,
 // which may be "" for no configuration at all.
 func (c *envCache) forPath(configPath string) (*environment, error) {
-	stamp := statStamp(configPath)
-	if cached, ok := c.byPath[configPath]; ok && cached.stamp == stamp {
+	stamp := c.statInputs(configPath)
+	if cached, ok := c.byPath[configPath]; ok && cached.stamp.equal(stamp) {
 		return cached, nil
 	}
 

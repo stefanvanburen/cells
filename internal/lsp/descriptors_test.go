@@ -470,6 +470,55 @@ variables:
 	})
 }
 
+// Regenerating a descriptor set takes effect without restarting the server,
+// the way editing a configuration does. The environment is rebuilt when any
+// file it was built from changes, not only when the configuration does.
+func TestServerReloadsChangedDescriptorSet(t *testing.T) {
+	t.Parallel()
+
+	dir := t.TempDir()
+	configPath := filepath.Join(dir, lsp.ConfigFileName)
+	ok.MustNoError(t, os.WriteFile(configPath, []byte(`
+name: test
+variables:
+  - name: request
+    type_name: "cells.test.Request"
+`), 0o600))
+
+	// Start from a set whose Request has no method field, the way a .proto
+	// file that has not declared it yet would build.
+	setPath := filepath.Join(dir, "descriptors.binpb")
+	copyFile(t, writeDescriptorSetWithout(t, func(f *descriptorpb.FileDescriptorProto) {
+		request := f.MessageType[0]
+		request.Field = request.Field[1:]
+	}), setPath)
+
+	conn := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{DescriptorSets: []string{setPath}})
+	initializeServer(t, conn, "")
+
+	celPath := filepath.Join(dir, "a.cel")
+	diags := openAndDiagnose(t, conn, celPath, `request.method == "POST"`)
+	if ok.Equal(t, len(diags), 1, ok.Sprintf("diagnostics: %v", diags)) {
+		ok.True(t, strings.Contains(diagnosticMessage(diags[0]), "method"),
+			ok.Sprintf("message: %v", diags[0].Message))
+	}
+
+	// Regenerate the set with the field declared, and ask again.
+	copyFile(t, writeDescriptorSet(t), setPath)
+	diags = diagnoseOpen(t, conn, celPath)
+	ok.Equal(t, len(diags), 0, ok.Sprintf("diagnostics: %v", diags))
+}
+
+// copyFile copies src over dst, which is how a test regenerates a descriptor
+// set in place.
+func copyFile(t *testing.T, src, dst string) {
+	t.Helper()
+
+	data, err := os.ReadFile(src)
+	ok.MustNoError(t, err)
+	ok.MustNoError(t, os.WriteFile(dst, data, 0o600))
+}
+
 // A descriptor set built without source info carries no comments, and hover
 // falls back to reporting the type alone rather than failing.
 func TestProtoFieldDocumentationWithoutSourceInfo(t *testing.T) {
