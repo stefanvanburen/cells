@@ -85,7 +85,7 @@ func ServeStream(ctx context.Context, rwc io.ReadWriteCloser, opts Options) erro
 	// contract; under synchronous dispatch the request is recycled as soon as
 	// the handler returns, racing that derivation. cells' requests complete
 	// near-instantly, so $/cancelRequest support isn't worth the tradeoff.
-	conn.Go(ctx, protocol.ServerHandler(s, jsonrpc2.MethodNotFoundHandler))
+	conn.Go(ctx, s.lifecycleGuard(protocol.ServerHandler(s, jsonrpc2.MethodNotFoundHandler)))
 	<-conn.Done()
 	return nil
 }
@@ -155,7 +155,51 @@ type server struct {
 	// that do both showing every diagnostic twice.
 	pullDiagnostics bool
 
-	shutdown atomic.Bool // set by Shutdown; read by Exit to pick its process exit code
+	initialized atomic.Bool // set by Initialize; read by the lifecycle guard
+	shutdown    atomic.Bool // set by Shutdown; read by Exit to pick its process exit code
+}
+
+// lifecycleGuard enforces the order the specification puts on a session:
+// nothing before initialize, one initialize per connection, and nothing but
+// exit once shutdown has been received. A client that keeps to that order
+// never meets it.
+//
+// A call that breaks the order is refused with the code the specification
+// names for it. A notification has nobody to answer, so it is dropped
+// silently instead. Exit is exempt either way: it is how a client ends a
+// session, and it has to work whatever state that session is in.
+func (s *server) lifecycleGuard(next jsonrpc2.Handler) jsonrpc2.Handler {
+	return func(ctx context.Context, req *jsonrpc2.Request) (any, error) {
+		switch err := s.lifecycleError(req.Method()); {
+		case err == nil:
+			return next(ctx, req)
+		case req.IsCall():
+			return nil, err
+		default:
+			return nil, nil
+		}
+	}
+}
+
+// lifecycleError reports why a method cannot be handled in the state the
+// session is in, or nil when it can.
+func (s *server) lifecycleError(method string) error {
+	switch method {
+	case protocol.MethodExit:
+		return nil
+	case protocol.MethodInitialize:
+		if s.initialized.Load() {
+			return jsonrpc2.NewError(jsonrpc2.InvalidRequest, "server is already initialized")
+		}
+		return nil
+	}
+	if !s.initialized.Load() {
+		return jsonrpc2.NewError(jsonrpc2.ServerNotInitialized, "server is not initialized")
+	}
+	if s.shutdown.Load() {
+		return jsonrpc2.NewError(jsonrpc2.InvalidRequest, "server is shut down")
+	}
+	return nil
 }
 
 func newServer(opts Options) (*server, error) {
@@ -268,6 +312,7 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 			return nil, fmt.Errorf("invalid initializationOptions: %w", err)
 		}
 	}
+	s.initialized.Store(true)
 	return &protocol.InitializeResult{
 		Capabilities: protocol.ServerCapabilities{
 			TextDocumentSync: &protocol.TextDocumentSyncOptions{
