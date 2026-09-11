@@ -8,6 +8,7 @@ import (
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common/operators"
 	"go.lsp.dev/protocol"
+	"go.lsp.dev/uri"
 )
 
 // checkSeverity returns the severity to report a type-check failure at.
@@ -35,6 +36,25 @@ func (s *server) publishDiagnostics(ctx context.Context, f *file) {
 		URI:         f.uri,
 		Version:     protocol.NewOptional(f.version),
 		Diagnostics: s.diagnosticsFor(f),
+	})
+}
+
+// clearDiagnostics pushes an empty set for a document, which is what retracts
+// the diagnostics cells published for it.
+//
+// A client goes on showing whatever was last published against a URI until the
+// server replaces it, so a closed document whose diagnostics are never cleared
+// keeps them — in VS Code, in the Problems panel, after the editor is gone.
+func (s *server) clearDiagnostics(ctx context.Context, docURI uri.URI) {
+	client, ok := protocol.ClientFromContext(ctx)
+	if !ok {
+		return
+	}
+	// No version: the document this refers to is no longer open, so there is
+	// no version of it for the client to match against.
+	_ = client.PublishDiagnostics(ctx, &protocol.PublishDiagnosticsParams{
+		URI:         docURI,
+		Diagnostics: []protocol.Diagnostic{},
 	})
 }
 

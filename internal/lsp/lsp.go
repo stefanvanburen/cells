@@ -351,10 +351,11 @@ func (s *server) DidChange(ctx context.Context, params *protocol.DidChangeTextDo
 	return nil
 }
 
-func (s *server) DidClose(_ context.Context, params *protocol.DidCloseTextDocumentParams) error {
+func (s *server) DidClose(ctx context.Context, params *protocol.DidCloseTextDocumentParams) error {
 	s.mu.Lock()
-	defer s.mu.Unlock()
-
 	delete(s.files, params.TextDocument.URI)
+	s.mu.Unlock()
+
+	s.clearDiagnostics(ctx, params.TextDocument.URI)
 	return nil
 }

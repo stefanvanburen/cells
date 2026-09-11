@@ -690,6 +690,48 @@ func TestDiagnosticsPushOnChange(t *testing.T) {
 	ok.Equal(t, len(dc.latest().Diagnostics), 0)
 }
 
+func TestDiagnosticsClearedOnClose(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	dc := newDiagnosticCollector()
+	clientRPC := newLSPClient(t, dc, lsp.Options{})
+
+	var initResult protocol.InitializeResult
+	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
+	ok.MustNoError(t, err)
+	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})
+	ok.MustNoError(t, err)
+
+	testURI := lspuri.URI("file:///test.cel")
+
+	err = clientRPC.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI:        testURI,
+			LanguageID: "cel",
+			Version:    1,
+			Text:       "1 +",
+		},
+	})
+	ok.MustNoError(t, err)
+
+	dc.waitForDiagnostics(t, 1)
+	ok.True(t, len(dc.latest().Diagnostics) > 0)
+
+	// Closing the document has to retract what was published for it: the
+	// client keeps showing the last set it was sent until the server replaces
+	// it.
+	err = clientRPC.Notify(ctx, "textDocument/didClose", protocol.DidCloseTextDocumentParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: testURI},
+	})
+	ok.MustNoError(t, err)
+
+	dc.waitForDiagnostics(t, 2)
+	params := dc.latest()
+	ok.Equal(t, string(params.URI), string(testURI))
+	ok.Equal(t, len(params.Diagnostics), 0)
+}
+
 // --- Comprehensive file test ---
 
 func TestDiagnosticsComprehensive(t *testing.T) {
