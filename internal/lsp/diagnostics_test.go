@@ -590,6 +590,12 @@ func (dc *diagnosticCollector) waitForDiagnostics(t *testing.T, n int) {
 	}
 }
 
+func (dc *diagnosticCollector) count() int {
+	dc.mu.Lock()
+	defer dc.mu.Unlock()
+	return len(dc.diagnostics)
+}
+
 func (dc *diagnosticCollector) latest() protocol.PublishDiagnosticsParams {
 	dc.mu.Lock()
 	defer dc.mu.Unlock()
@@ -761,7 +767,53 @@ func TestDiagnosticsCapabilities(t *testing.T) {
 	_, err := clientRPC.Call(t.Context(), "initialize", protocol.InitializeParams{}, &result)
 	ok.MustNoError(t, err)
 
-	// Push diagnostics only — DiagnosticProvider is not advertised to avoid
-	// clients using both push and pull simultaneously.
+	// Push diagnostics by default — DiagnosticProvider is not advertised to
+	// avoid clients using both push and pull simultaneously.
 	ok.True(t, result.Capabilities.DiagnosticProvider == nil)
+}
+
+// A client that asks for pull diagnostics gets the capability advertised and
+// nothing pushed, since a client doing both shows every diagnostic twice.
+func TestDiagnosticsPullOnly(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	dc := newDiagnosticCollector()
+	clientRPC := newLSPClient(t, dc, lsp.Options{})
+
+	var initResult protocol.InitializeResult
+	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{
+		InitializationOptions: protocol.LSPAny(`{"pullDiagnostics": true}`),
+	}, &initResult)
+	ok.MustNoError(t, err)
+	ok.True(t, initResult.Capabilities.DiagnosticProvider != nil)
+	ok.MustNoError(t, clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{}))
+
+	testURI := lspuri.URI("file:///test.cel")
+	ok.MustNoError(t, clientRPC.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI: testURI, LanguageID: "cel", Version: 1, Text: "1 +",
+		},
+	}))
+
+	// Pulling round-trips, and dispatch is in wire order, so the didOpen that
+	// would have pushed has certainly been handled by the time this returns.
+	var report protocol.RelatedFullDocumentDiagnosticReport
+	_, err = clientRPC.Call(ctx, "textDocument/diagnostic", protocol.DocumentDiagnosticParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: testURI},
+	}, &report)
+	ok.MustNoError(t, err)
+	ok.True(t, len(report.Items) > 0)
+
+	ok.Equal(t, dc.count(), 0)
+
+	// Closing publishes nothing either: there is no push to retract.
+	ok.MustNoError(t, clientRPC.Notify(ctx, "textDocument/didClose", protocol.DidCloseTextDocumentParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: testURI},
+	}))
+	_, err = clientRPC.Call(ctx, "textDocument/diagnostic", protocol.DocumentDiagnosticParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: testURI},
+	}, &report)
+	ok.MustNoError(t, err)
+	ok.Equal(t, dc.count(), 0)
 }

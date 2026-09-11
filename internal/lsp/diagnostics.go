@@ -28,6 +28,9 @@ func checkSeverity(opts Options) protocol.DiagnosticSeverity {
 
 // publishDiagnostics computes and pushes diagnostics for the given file.
 func (s *server) publishDiagnostics(ctx context.Context, f *file) {
+	if s.pullDiagnostics {
+		return
+	}
 	client, ok := protocol.ClientFromContext(ctx)
 	if !ok {
 		return
@@ -46,6 +49,9 @@ func (s *server) publishDiagnostics(ctx context.Context, f *file) {
 // server replaces it, so a closed document whose diagnostics are never cleared
 // keeps them — in VS Code, in the Problems panel, after the editor is gone.
 func (s *server) clearDiagnostics(ctx context.Context, docURI uri.URI) {
+	if s.pullDiagnostics {
+		return
+	}
 	client, ok := protocol.ClientFromContext(ctx)
 	if !ok {
 		return

@@ -149,6 +149,12 @@ type server struct {
 	// on the same terms as envs itself.
 	publishedGeneration uint64
 
+	// pullDiagnostics makes the client ask for diagnostics rather than be told
+	// them. The two models are mutually exclusive here: a server that
+	// advertises the pull capability and goes on publishing leaves clients
+	// that do both showing every diagnostic twice.
+	pullDiagnostics bool
+
 	shutdown atomic.Bool // set by Shutdown; read by Exit to pick its process exit code
 }
 
@@ -248,6 +254,12 @@ type clientInitializationOptions struct {
 	// present, even as an empty list, it replaces whatever the server was
 	// started with.
 	DescriptorSets []string `json:"descriptorSets"`
+
+	// PullDiagnostics asks the server to answer textDocument/diagnostic
+	// requests instead of publishing diagnostics as documents change. It is a
+	// client-side choice because only the client knows whether it implements
+	// the pull model, and cells has no way to ask.
+	PullDiagnostics *bool `json:"pullDiagnostics"`
 }
 
 func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams) (*protocol.InitializeResult, error) {
@@ -277,6 +289,7 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 			SignatureHelpProvider: &protocol.SignatureHelpOptions{
 				TriggerCharacters: []string{"(", ","},
 			},
+			DiagnosticProvider:        s.diagnosticProvider(),
 			DefinitionProvider:        protocol.Boolean(true),
 			RenameProvider:            protocol.Boolean(true),
 			ReferencesProvider:        protocol.Boolean(true),
@@ -290,6 +303,19 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 	}, nil
 }
 
+// diagnosticProvider is the pull-model capability, which cells advertises only
+// when the client asked for it.
+//
+// cells has one document's worth of diagnostics to report and nothing
+// cross-file to recompute, so neither inter-file dependencies nor workspace
+// diagnostics apply.
+func (s *server) diagnosticProvider() protocol.DiagnosticProvider {
+	if !s.pullDiagnostics {
+		return nil
+	}
+	return &protocol.DiagnosticOptions{Identifier: new(serverName)}
+}
+
 // applyInitializationOptions replaces the server's environment with the one
 // the client asked for. Each key the client sends overrides the corresponding
 // value the server was started with; keys it omits are left alone.
@@ -297,6 +323,9 @@ func (s *server) applyInitializationOptions(raw json.RawMessage) error {
 	var clientOpts clientInitializationOptions
 	if err := json.Unmarshal(raw, &clientOpts); err != nil {
 		return err
+	}
+	if clientOpts.PullDiagnostics != nil {
+		s.pullDiagnostics = *clientOpts.PullDiagnostics
 	}
 	if clientOpts.Extensions == nil && clientOpts.Config == nil && clientOpts.DescriptorSets == nil {
 		return nil

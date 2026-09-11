@@ -267,6 +267,22 @@ without a version get the newest one.
 
 Run `cells --help` for the full list of supported names.
 
+## Diagnostics
+
+`cells` publishes diagnostics as a file is opened and edited. Clients that
+implement the LSP pull model can ask for them instead; set `pullDiagnostics` in
+your editor's `initializationOptions`:
+
+```json
+{ "pullDiagnostics": true }
+```
+
+The two models are mutually exclusive. With `pullDiagnostics` on, `cells`
+advertises the capability and stops publishing, so a client that does both does
+not show every diagnostic twice. The trade is that an edit to a configuration
+reaches an open file when the client next asks, rather than as soon as `cells`
+notices.
+
 ## Usage
 
 ### Neovim
