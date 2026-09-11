@@ -59,6 +59,21 @@ func TestFormat(t *testing.T) {
 	}
 }
 
+// TestFormatEditRangeNonASCII pins the end of the whole-document replacement
+// to UTF-16 code units, which is what LSP positions are measured in. The input
+// is 11 bytes but 10 code units long, and has no trailing newline, so a range
+// counted in bytes would run past the end of the only line.
+func TestFormatEditRangeNonASCII(t *testing.T) {
+	t.Parallel()
+
+	edits := requestFormatting(t, "testdata/format/non_ascii.input.cel")
+	if !ok.Equal(t, len(edits), 1) {
+		return
+	}
+	ok.Equal(t, edits[0].Range.Start, protocol.Position{Line: 0, Character: 0})
+	ok.Equal(t, edits[0].Range.End, protocol.Position{Line: 0, Character: 10})
+}
+
 func TestFormatParseError(t *testing.T) {
 	t.Parallel()
 	// Parse errors should return no edits (not crash).
