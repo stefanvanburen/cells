@@ -299,4 +299,17 @@ vim.lsp.enable("cells")
 
 Neovim recognizes `.cel` files by default as of [0.12](https://github.com/neovim/neovim/pull/37834).
 
+Anything this README gives as `initializationOptions` goes in `init_options`:
+
+```lua
+vim.lsp.config("cells", {
+  filetypes = { "cel" },
+  cmd = { "cells", "serve" },
+  init_options = {
+    config = "/path/to/cel.yaml",
+    pullDiagnostics = true,
+  },
+})
+```
+
 To verify it's working, open a `.cel` file and run `:checkhealth lsp` or `:LspInfo`.
