@@ -97,6 +97,23 @@ $ cells rename --new-name=newVar file.cel:1:1
 $ cells rename --new-name=newVar --write file.cel:1:1
 ```
 
+### `cells version`
+
+Show what this binary was built from. The Go toolchain records it; nothing is
+stamped by hand.
+
+```console
+$ cells version
+cells    v0.4.0
+revision 8d6dbb7fb8d4
+built    2026-09-11T18:08:46Z
+go       go1.27.1
+```
+
+A binary installed from a module tag reports that tag and carries no revision.
+One built from a checkout reports the revision it came from, marked when the
+tree had uncommitted changes.
+
 ## Environment
 
 Real CEL expressions refer to variables their host provides — `request`,

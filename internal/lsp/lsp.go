@@ -11,7 +11,6 @@ import (
 	"io"
 	"maps"
 	"os"
-	"runtime/debug"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -19,17 +18,10 @@ import (
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
+	"go.vanburen.xyz/cells/internal/version"
 )
 
 const serverName = "cells"
-
-func getVersion() string {
-	info, ok := debug.ReadBuildInfo()
-	if !ok {
-		return "dev"
-	}
-	return info.Main.Version
-}
 
 // Serve starts the LSP server, communicating over stdin/stdout.
 // It blocks until the connection is closed.
@@ -343,7 +335,7 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 		},
 		ServerInfo: protocol.ServerInfo{
 			Name:    serverName,
-			Version: protocol.NewOptional(getVersion()),
+			Version: protocol.NewOptional(version.Short()),
 		},
 	}, nil
 }

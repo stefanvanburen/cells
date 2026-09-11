@@ -14,6 +14,7 @@ import (
 	"github.com/pressly/cli"
 	"github.com/pressly/cli/flagtype"
 	"go.vanburen.xyz/cells/internal/lsp"
+	"go.vanburen.xyz/cells/internal/version"
 	"znkr.io/diff/textdiff"
 )
 
@@ -47,6 +48,7 @@ func rootCommand() *cli.Command {
 			referencesCommand(),
 			definitionCommand(),
 			renameCommand(),
+			versionCommand(),
 		},
 	}
 }
@@ -97,6 +99,17 @@ type exitError struct {
 }
 
 func (e *exitError) Error() string { return "" }
+
+func versionCommand() *cli.Command {
+	return &cli.Command{
+		Name:    "version",
+		Summary: "Show what this binary was built from",
+		Exec: func(_ context.Context, s *cli.State) error {
+			_, err := io.WriteString(s.Stdout, version.Detail())
+			return err
+		},
+	}
+}
 
 func serveCommand() *cli.Command {
 	return &cli.Command{
