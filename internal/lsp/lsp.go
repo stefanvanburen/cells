@@ -9,8 +9,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"os"
 	"runtime/debug"
+	"slices"
 	"sync"
 	"sync/atomic"
 
@@ -357,5 +359,24 @@ func (s *server) DidClose(ctx context.Context, params *protocol.DidCloseTextDocu
 	s.mu.Unlock()
 
 	s.clearDiagnostics(ctx, params.TextDocument.URI)
+	s.releaseUnusedEnvs()
 	return nil
+}
+
+// releaseUnusedEnvs frees the environments no open document needs any more.
+//
+// An environment is built per configuration and lives in the cache from the
+// first document that needs it onwards. One built from a configuration that
+// names descriptor sets holds every type they describe, so a session that
+// visits several projects is worth not accumulating.
+func (s *server) releaseUnusedEnvs() {
+	s.mu.Lock()
+	openURIs := slices.Collect(maps.Keys(s.files))
+	s.mu.Unlock()
+
+	inUse := make(map[string]bool, len(openURIs))
+	for _, docURI := range openURIs {
+		inUse[s.envs.configPathFor(docURI)] = true
+	}
+	s.envs.retain(inUse)
 }

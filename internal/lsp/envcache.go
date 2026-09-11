@@ -107,6 +107,21 @@ func (c *envCache) configPathFor(docURI uri.URI) string {
 	return FindConfig(filepath.Dir(docURI.FsPath()))
 }
 
+// retain drops every cached environment whose configuration is not in use.
+// This is what gives back an environment's type registry, and the descriptor
+// documentation held alongside it, once the last document it covered closes.
+//
+// The configuration named on the command line or by initializationOptions is
+// kept whatever is open: it governs every document, and was built eagerly so
+// that a configuration the server cannot use is reported from initialize.
+func (c *envCache) retain(inUse map[string]bool) {
+	for configPath := range c.byPath {
+		if configPath != c.opts.ConfigPath && !inUse[configPath] {
+			delete(c.byPath, configPath)
+		}
+	}
+}
+
 // forPath returns the environment built from the configuration at configPath,
 // which may be "" for no configuration at all.
 func (c *envCache) forPath(configPath string) (*environment, error) {
