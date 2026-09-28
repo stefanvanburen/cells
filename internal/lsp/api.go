@@ -37,9 +37,9 @@ const cliURI = "file:///cli"
 // CheckDiagnostic represents a single diagnostic from parsing or type-checking.
 type CheckDiagnostic struct {
 	Line     int    // 1-indexed
-	Col      int    // 1-indexed, UTF-8 bytes
+	Col      int    // 1-indexed, UTF-16 code units
 	EndLine  int    // 1-indexed
-	EndCol   int    // 1-indexed, UTF-8 bytes
+	EndCol   int    // 1-indexed, UTF-16 code units
 	Severity string // "error" or "warning"
 	Message  string
 }
@@ -94,7 +94,7 @@ func Hover(content string, line, col int, opts Options) (string, error) {
 	return markup.Value, nil
 }
 
-// Reference is a source location (1-indexed, UTF-8 byte columns).
+// Reference is a source location (1-indexed, UTF-16 columns).
 type Reference struct {
 	Line    int
 	Col     int
@@ -132,7 +132,7 @@ func References(content string, line, col int, opts Options) ([]Reference, error
 }
 
 // Definition is where a name was declared: a location in a named file
-// (1-indexed, UTF-8 byte columns).
+// (1-indexed, UTF-16 columns).
 type Definition struct {
 	Path    string
 	Line    int

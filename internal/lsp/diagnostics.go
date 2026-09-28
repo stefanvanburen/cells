@@ -118,16 +118,15 @@ func issuesToDiagnostics(content string, issues *cel.Issues, severity protocol.D
 	diagnostics := make([]protocol.Diagnostic, 0, len(errs))
 	for _, e := range errs {
 		loc := e.Location
-		// cel-go uses 1-based line, 0-based column. LSP uses 0-based for both.
-		line := loc.Line() - 1
-		col := loc.Column()
-		if line < 0 {
-			line = 0
-		}
-		if col < 0 {
-			col = 0
-		}
-		startPos := protocol.Position{Line: uint32(line), Character: uint32(col)}
+		// cel-go uses 1-based lines and 0-based rune columns. LSP uses
+		// 0-based lines and UTF-16 columns, so convert through the source
+		// rather than copying the column directly (an astral character is
+		// one rune but two UTF-16 code units).
+		line := max(loc.Line()-1, 0)
+		col := max(loc.Column(), 0)
+		startOffset := max(runeLineColToByteOffset(content, line, col), 0)
+		startLine, startCol := byteOffsetToLineCol(content, startOffset)
+		startPos := protocol.Position{Line: startLine, Character: startCol}
 		// cel-go errors don't include an end position, so we use the end of the line.
 		endPos := endOfLine(content, line)
 
@@ -171,7 +170,8 @@ func endOfLine(content string, line int) protocol.Position {
 			for end < len(content) && content[end] != '\n' {
 				end++
 			}
-			return protocol.Position{Line: uint32(line), Character: uint32(end - i)}
+			_, character := byteOffsetToLineCol(content, end)
+			return protocol.Position{Line: uint32(line), Character: character}
 		}
 		if content[i] == '\n' {
 			currentLine++

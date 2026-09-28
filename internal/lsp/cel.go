@@ -107,6 +107,33 @@ func byteOffsetToLineCol(text string, offset int) (line, col uint32) {
 	return
 }
 
+// runeLineColToByteOffset converts a 0-indexed line and rune column to a byte
+// offset. CEL source locations use rune columns, while LSP positions use
+// UTF-16 columns.
+func runeLineColToByteOffset(text string, line, runeCol int) int {
+	currentLine, currentCol := 0, 0
+	for i := 0; i < len(text); {
+		if currentLine == line && currentCol == runeCol {
+			return i
+		}
+		r, size := utf8.DecodeRuneInString(text[i:])
+		if r == '\n' {
+			if currentLine == line {
+				return i
+			}
+			currentLine++
+			currentCol = 0
+		} else {
+			currentCol++
+		}
+		i += size
+	}
+	if currentLine == line && currentCol == runeCol {
+		return len(text)
+	}
+	return -1
+}
+
 // lineColToByteOffset converts an LSP position (0-indexed line, UTF-16 col) to a byte offset.
 func lineColToByteOffset(text string, line, utf16Col uint32) int {
 	currentLine := uint32(0)

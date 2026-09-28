@@ -400,6 +400,21 @@ func TestDiagnosticsTypeCheckPositions(t *testing.T) {
 
 // --- Range tests ---
 
+func TestDiagnosticsUnicodeRangeUsesUTF16Columns(t *testing.T) {
+	t.Parallel()
+
+	// The ')' is the 11th rune and the 14th byte, but begins at the 12th
+	// UTF-16 code unit, since the emoji takes two.
+	diags, err := lsp.Check(`"🎉" + 1 + )`, lsp.Options{})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	ok.True(t, len(diags) > 0)
+	ok.Equal(t, diags[0].Col, 12)
+	ok.Equal(t, diags[0].EndCol, 13)
+}
+
 func TestDiagnosticsRangeEndsAtEndOfLine(t *testing.T) {
 	t.Parallel()
 

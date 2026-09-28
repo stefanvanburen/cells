@@ -392,7 +392,7 @@ func renameCommand() *cli.Command {
 }
 
 // parsePosition parses an argument of the form "file:line:col" where line and col are 1-indexed.
-// Columns are measured in UTF-8 bytes.
+// Columns are measured in UTF-16 code units, matching LSP positions.
 func parsePosition(arg string) (filename string, line, col int, err error) {
 	rest, colStr, ok := strings.CutLast(arg, ":")
 	if !ok {
