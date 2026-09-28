@@ -74,6 +74,36 @@ func TestDefinitionPointsAtTheConfiguration(t *testing.T) {
 	}
 }
 
+// A definition spans the name itself, in UTF-16 code units: not a quote around
+// it, and not short by the second code unit of an emoji before it.
+func TestDefinitionSpansTheName(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		config  string
+		wantCol int
+	}{
+		{"quoted", "variables:\n  - name: \"retries\"\n    type: \"int\"\n", 12},
+		{"after_an_emoji", "variables:\n  - {description: \"🎉\", name: retries, type: \"int\"}\n", 31},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := lsp.Options{ConfigPath: writeConfig(t, tt.config)}
+			got, found, err := lsp.FindDefinition("p.cel", "retries < 3", 1, 1, opts)
+			ok.MustNoError(t, err)
+			if !ok.True(t, found) {
+				return
+			}
+			ok.Equal(t, got.Line, 2)
+			ok.Equal(t, got.Col, tt.wantCol)
+			ok.Equal(t, got.EndCol, tt.wantCol+len("retries"))
+		})
+	}
+}
+
 // Nothing else in a CEL expression was declared anywhere cells can point at.
 func TestDefinitionFindsNothingToPointAt(t *testing.T) {
 	t.Parallel()

@@ -129,7 +129,7 @@ func findConfigDeclaration(configPath, section, name string) (protocol.Location,
 		if declared == nil || declared.Value != name {
 			continue
 		}
-		return yamlNodeLocation(configPath, declared), true
+		return yamlNodeLocation(configPath, string(data), declared), true
 	}
 	return protocol.Location{}, false
 }
@@ -156,18 +156,22 @@ func mappingValue(node *yaml.Node, key string) *yaml.Node {
 	return nil
 }
 
-// yamlNodeLocation converts a YAML node's position to an LSP location. yaml.v3
-// reports 1-indexed lines and columns, in runes; LSP wants them 0-indexed, and
-// its columns are UTF-16 code units.
-func yamlNodeLocation(path string, node *yaml.Node) protocol.Location {
-	line := uint32(max(node.Line-1, 0))
-	start := uint32(max(node.Column-1, 0))
-	end := start + uint32(len([]rune(node.Value)))
+// yamlNodeLocation converts the position of node, a scalar in content, to an
+// LSP location spanning its value. yaml.v3 reports 1-indexed lines and
+// columns, in runes, and places a quoted scalar at its opening quote; LSP
+// wants them 0-indexed, and its columns are UTF-16 code units.
+func yamlNodeLocation(path, content string, node *yaml.Node) protocol.Location {
+	start := max(runeLineColToByteOffset(content, max(node.Line-1, 0), max(node.Column-1, 0)), 0)
+	if node.Style&(yaml.DoubleQuotedStyle|yaml.SingleQuotedStyle) != 0 {
+		start++
+	}
+	startLine, startCol := byteOffsetToLineCol(content, start)
+	endLine, endCol := byteOffsetToLineCol(content, start+len(node.Value))
 	return protocol.Location{
 		URI: lspuri.File(path),
 		Range: protocol.Range{
-			Start: protocol.Position{Line: line, Character: start},
-			End:   protocol.Position{Line: line, Character: end},
+			Start: protocol.Position{Line: startLine, Character: startCol},
+			End:   protocol.Position{Line: endLine, Character: endCol},
 		},
 	}
 }
