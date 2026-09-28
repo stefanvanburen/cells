@@ -6,8 +6,28 @@ import (
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
 	lspuri "go.lsp.dev/uri"
+	"go.vanburen.xyz/cells/internal/lsp"
 	"go.vanburen.xyz/ok"
 )
+
+// A client sends textDocument/prepareRename only to a server whose rename
+// capability says it answers one; a bare true does not.
+func TestRenameCapabilityOffersPrepare(t *testing.T) {
+	t.Parallel()
+
+	conn := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{})
+
+	var result struct {
+		Capabilities struct {
+			RenameProvider struct {
+				PrepareProvider bool `json:"prepareProvider"`
+			} `json:"renameProvider"`
+		} `json:"capabilities"`
+	}
+	_, err := conn.Call(t.Context(), "initialize", protocol.InitializeParams{}, &result)
+	ok.MustNoError(t, err)
+	ok.True(t, result.Capabilities.RenameProvider.PrepareProvider)
+}
 
 // requestRename sends a textDocument/rename request at the given position.
 func requestRename(t *testing.T, conn jsonrpc2.Conn, uri lspuri.URI, pos protocol.Position, newName string) *protocol.WorkspaceEdit {

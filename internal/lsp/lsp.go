@@ -328,7 +328,7 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 			},
 			DiagnosticProvider:        s.diagnosticProvider(),
 			DefinitionProvider:        protocol.Boolean(true),
-			RenameProvider:            protocol.Boolean(true),
+			RenameProvider:            &protocol.RenameOptions{PrepareProvider: new(true)},
 			ReferencesProvider:        protocol.Boolean(true),
 			DocumentHighlightProvider: protocol.Boolean(true),
 			InlayHintProvider:         protocol.Boolean(true),
