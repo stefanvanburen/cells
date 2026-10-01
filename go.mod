@@ -5,7 +5,7 @@ go 1.27.0
 require (
 	cel.dev/cel-go v0.32.0
 	cel.dev/cel-go/ext/security v0.32.0
-	github.com/pressly/cli v0.7.0
+	github.com/pressly/cli v0.8.0
 	go.lsp.dev/jsonrpc2 v1.0.1
 	go.lsp.dev/protocol v1.0.1
 	go.lsp.dev/uri v1.0.1
