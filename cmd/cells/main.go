@@ -60,9 +60,9 @@ func rootCommand() *cli.Command {
 // once per file.
 func options(s *cli.State) (lsp.Options, error) {
 	opts := lsp.Options{
-		Extensions:     cli.GetFlag[[]string](s, "ext"),
-		ConfigPath:     cli.GetFlag[string](s, "config"),
-		DescriptorSets: cli.GetFlag[[]string](s, "descriptor-set"),
+		Extensions:     s.GetFlag[[]string]("ext"),
+		ConfigPath:     s.GetFlag[string]("config"),
+		DescriptorSets: s.GetFlag[[]string]("descriptor-set"),
 	}
 	if err := lsp.ValidateExtensions(opts.Extensions); err != nil {
 		return lsp.Options{}, err
@@ -139,8 +139,8 @@ func formatCommand() *cli.Command {
 			{Name: "diff", Short: "d"},
 		},
 		Exec: func(_ context.Context, s *cli.State) error {
-			writeBack := cli.GetFlag[bool](s, "write")
-			showDiff := cli.GetFlag[bool](s, "diff")
+			writeBack := s.GetFlag[bool]("write")
+			showDiff := s.GetFlag[bool]("diff")
 			opts, err := options(s)
 			if err != nil {
 				return err
@@ -360,8 +360,8 @@ func renameCommand() *cli.Command {
 			{Name: "write", Short: "w"},
 		},
 		Exec: func(_ context.Context, s *cli.State) error {
-			newName := cli.GetFlag[string](s, "new-name")
-			writeBack := cli.GetFlag[bool](s, "write")
+			newName := s.GetFlag[string]("new-name")
+			writeBack := s.GetFlag[bool]("write")
 			opts, err := options(s)
 			if err != nil {
 				return err
