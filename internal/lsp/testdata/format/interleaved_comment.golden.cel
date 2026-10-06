@@ -1,3 +1,4 @@
-1 + 2 +
-// interleaved comment
-3
+1 +
+  2 +
+  // interleaved comment
+  3

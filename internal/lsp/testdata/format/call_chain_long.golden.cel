@@ -1,0 +1,4 @@
+request.items
+  .filter(item, item.price > 0 && item.in_stock)
+  .map(item, item.sku_identifier)
+  .exists(sku, sku.startsWith("A-"))

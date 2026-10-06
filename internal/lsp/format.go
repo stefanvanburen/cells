@@ -59,13 +59,15 @@ const (
 // differs only in the whitespace between them, so a literal keeps the form it
 // was written in and no comment is lost; the one exception is the trailing
 // comma of a list, map or message, which is there exactly when it is broken
-// across lines. The AST decides where lines may break: between the operands
-// of a chain of && or ||, after the arguments of a call or the elements of a
-// list, map or message, around the branches of a conditional, and inside
-// parentheses. Each of those is a group, laid out on one line when it fits
-// within [formatWidth] columns and broken otherwise. A comment on its own
-// line stays on its own line, and one at the end of a line stays at the end
-// of it, which breaks every group around it.
+// across lines. The AST decides where lines may break: after each operator
+// of a chain of binary operators, around the arguments of a call and the
+// elements of a list, map or message, before each call of a chain of method
+// calls, around the branches of a conditional, and inside parentheses. Each
+// of those is a group, laid out on one line when it fits within
+// [formatWidth] columns and broken otherwise, and broken too where the source
+// breaks a line at one of its break points, so that lines split on purpose
+// stay split. A comment on its own line stays on its own line, and one at the
+// end of a line stays at the end of it, which breaks every group around it.
 func formatCEL(content string, celEnv *cel.Env) (string, error) {
 	parsed, iss := celEnv.Parse(content)
 	if iss.Err() != nil {
@@ -124,6 +126,7 @@ const (
 	gapSpace                // a space
 	gapSoftline             // a space in a flat group, a line break in a broken one
 	gapSoftbreak            // nothing in a flat group, a line break in a broken one
+	gapLine                 // a line break, breaking the group
 )
 
 // formatter lays out the tokens of an expression, in order. The methods that
@@ -139,6 +142,9 @@ type formatter struct {
 	gap gap
 	// started is whether anything has been written.
 	started bool
+	// operand is whether the next expression written is an operand of a chain
+	// of binary operators.
+	operand bool
 	// trailing is the index of a comment ending the line of the last token
 	// written, held back until what comes next, which a trailing comma may
 	// have to precede; it is 0 when there is none.
@@ -177,10 +183,13 @@ func (f *formatter) emitTo(push dom.Sink, last int) {
 	}
 }
 
-// placeGap writes the gap set for the next token now, rather than with the
-// token. A group that is about to open around the token would otherwise
-// decide whether the gap breaks, where it is the group outside that should.
+// placeGap writes what precedes the next token now, rather than with the
+// token: the comments on lines of their own before it, and the gap set for
+// it. A group that is about to open around the token would otherwise hold
+// them, and break for the comments or decide whether the gap breaks, where
+// the group outside should.
 func (f *formatter) placeGap(push dom.Sink) {
+	f.emitTo(push, f.nextToken()-1)
 	if f.gap != gapDefault {
 		f.flush(push)
 		f.writeGap(push, f.gap, f.nextToken())
@@ -188,12 +197,16 @@ func (f *formatter) placeGap(push dom.Sink) {
 	}
 }
 
-// writeGap writes the gap g before the token at index i.
+// writeGap writes the gap g before the token at index i. Where the gap may
+// break a line and the source breaks it, it does, which keeps the group
+// around it broken: lines split on purpose stay split.
 func (f *formatter) writeGap(push dom.Sink, g gap, i int) {
 	blank := f.blankLineBefore(i)
 	switch {
 	case f.kind(i-1) == gen.CELLexerCOMMENT && blank:
 		push(dom.Text("\n\n"))
+	case g == gapLine, (g == gapSoftline || g == gapSoftbreak) && f.lineBreakBefore(i):
+		push(dom.Text(newlines(blank)))
 	case g == gapSpace:
 		push(dom.Text(" "))
 	case g == gapSoftline:
@@ -201,6 +214,13 @@ func (f *formatter) writeGap(push dom.Sink, g gap, i int) {
 	case g == gapSoftbreak:
 		push(dom.TextIf(dom.Broken, newlines(blank)))
 	}
+}
+
+// lineBreakBefore reports whether the source breaks the line between the token
+// at index i and the last one before it that is not a comment.
+func (f *formatter) lineBreakBefore(i int) bool {
+	prev := f.step(i, -1)
+	return prev >= 0 && strings.Contains(f.content[f.tokens[prev].end:f.tokens[i].start], "\n")
 }
 
 // endsLine reports whether the token at index i is a comment at the end of
@@ -332,7 +352,12 @@ func (f *formatter) parentheses(expr ast.Expr) []int {
 
 // expr writes expr, with any parentheses around it.
 func (f *formatter) expr(push dom.Sink, expr ast.Expr) {
-	f.parenthesized(push, f.parentheses(expr), func(push dom.Sink) { f.bare(push, expr) })
+	// An operand of a chain indents the lines it breaks onto, unless it is
+	// parenthesized, since parentheses indent their content themselves.
+	operand := f.operand
+	f.operand = false
+	opens := f.parentheses(expr)
+	f.parenthesized(push, opens, func(push dom.Sink) { f.bare(push, expr, operand && len(opens) == 0) })
 }
 
 // parenthesized writes body inside the parentheses that open at opens,
@@ -353,11 +378,11 @@ func (f *formatter) parenthesized(push dom.Sink, opens []int, body func(dom.Sink
 	}))
 }
 
-// bare writes expr without the parentheses around it.
-func (f *formatter) bare(push dom.Sink, expr ast.Expr) {
-	// A macro is written as the call it was written as, not its expansion.
-	if call, ok := f.sourceInfo.GetMacroCall(expr.ID()); ok && call.Kind() == ast.CallKind {
-		f.call(push, expr.ID(), call.AsCall(), true)
+// bare writes expr without the parentheses around it. operand is whether it
+// is an operand of a chain of binary operators.
+func (f *formatter) bare(push dom.Sink, expr ast.Expr, operand bool) {
+	if _, _, ok := f.asCall(expr); ok {
+		f.callChain(push, expr)
 		return
 	}
 
@@ -366,22 +391,16 @@ func (f *formatter) bare(push dom.Sink, expr ast.Expr) {
 		f.expr(push, expr.AsSelect().Operand())
 
 	case ast.CallKind:
-		call := expr.AsCall()
-		switch fn := call.FunctionName(); fn {
-		case operators.LogicalAnd, operators.LogicalOr:
-			f.chain(push, expr)
+		switch fn := expr.AsCall().FunctionName(); {
+		case fn == operators.Conditional:
+			f.conditional(push, expr)
 			return
-		case operators.Conditional:
-			f.conditional(push, call)
+		case isBinaryOperator(fn):
+			f.chain(push, expr, operand)
 			return
-		case operators.Index, operators.OptIndex, operators.OptSelect:
-		default:
-			if _, isOperator := celOperatorSymbol(fn); !isOperator {
-				f.call(push, expr.ID(), call, false)
-				return
-			}
 		}
-		for _, arg := range call.Args() {
+		// A unary operator, an index or an optional selection.
+		for _, arg := range expr.AsCall().Args() {
 			f.expr(push, arg)
 		}
 
@@ -427,16 +446,27 @@ func (f *formatter) bare(push dom.Sink, expr ast.Expr) {
 	f.emitTo(push, f.lastToken(expr))
 }
 
-// chain writes a chain of && or || as a group with a line for each operand
-// when broken, the operator ending the line before it. The parser balances
-// a chain into a tree; the operands are its leaves, short of parentheses.
-func (f *formatter) chain(push dom.Sink, expr ast.Expr) {
+// isBinaryOperator reports whether fn is a binary operator spelled between its
+// operands, such as + or &&, rather than an index or optional selection.
+func isBinaryOperator(fn string) bool {
+	return operators.Arity(fn) == 2 && operators.Precedence(fn) >= operators.Precedence(operators.Multiply)
+}
+
+// chain writes a chain of binary operators of the same precedence, such as
+// a + b - c, as a group with a line for each operand when broken, the
+// operator ending the line before it. The parser balances a chain of && or ||
+// into a tree and nests the others to the left; the operands are its leaves,
+// short of parentheses. Broken, the lines after the first are indented,
+// except in a chain of && or || that is not itself an operand, which reads
+// as a list of conditions.
+func (f *formatter) chain(push dom.Sink, expr ast.Expr, nested bool) {
 	f.placeGap(push)
-	fn := expr.AsCall().FunctionName()
+	precedence := operators.Precedence(expr.AsCall().FunctionName())
 	var operands []ast.Expr
 	var collect func(ast.Expr)
 	collect = func(e ast.Expr) {
-		if e.Kind() == ast.CallKind && e.AsCall().FunctionName() == fn && len(f.parentheses(e)) == 0 {
+		if e.Kind() == ast.CallKind && isBinaryOperator(e.AsCall().FunctionName()) &&
+			operators.Precedence(e.AsCall().FunctionName()) == precedence && len(f.parentheses(e)) == 0 {
 			for _, arg := range e.AsCall().Args() {
 				collect(arg)
 			}
@@ -449,43 +479,133 @@ func (f *formatter) chain(push dom.Sink, expr ast.Expr) {
 		collect(arg)
 	}
 
+	// The first operand continues the line the chain starts on, so it is outside
+	// the indentation, which applies to text after a line break, and outside the
+	// group too: that it breaks, as a call can, need not break the chain.
+	indent := formatIndent
+	if fn := expr.AsCall().FunctionName(); !nested && (fn == operators.LogicalAnd || fn == operators.LogicalOr) {
+		indent = ""
+	}
+	f.operand = true
+	f.expr(push, operands[0])
 	push(dom.Group(formatWidth, func(push dom.Sink) {
-		for i, operand := range operands {
-			if i > 0 {
-				f.emitTo(push, f.nextToken()) // the operator
+		push(dom.Indent(indent, func(push dom.Sink) {
+			for _, operand := range operands[1:] {
+				op := f.nextToken()
+				// A line broken before the operator, rather than after it, is
+				// broken after it instead.
+				broken := f.lineBreakBefore(op)
+				f.emitTo(push, op)
 				f.gap = gapSoftline
-			}
-			f.expr(push, operand)
-		}
-	}))
-}
-
-// conditional writes c ? a : b as a group that, broken, puts each branch on
-// an indented line of its own.
-func (f *formatter) conditional(push dom.Sink, call ast.CallExpr) {
-	f.placeGap(push)
-	args := call.Args()
-	push(dom.Group(formatWidth, func(push dom.Sink) {
-		f.expr(push, args[0])
-		push(dom.Indent(formatIndent, func(push dom.Sink) {
-			for _, branch := range args[1:] {
-				f.gap = gapSoftline
-				f.emitTo(push, f.nextToken()) // ? or :
-				f.expr(push, branch)
+				if broken {
+					f.gap = gapLine
+				}
+				f.operand = true
+				f.expr(push, operand)
 			}
 		}))
 	}))
 }
 
-// call writes a call. The arguments of a macro that name the variables it
-// binds stay on the line of its name, as in xs.all(x, ..., the rest
-// following when the call is broken.
-func (f *formatter) call(push dom.Sink, id int64, call ast.CallExpr, macro bool) {
-	if call.IsMemberFunction() {
+// conditional writes c ? a : b as a group that, broken, puts each branch on
+// an indented line of its own. A conditional in the else branch continues the
+// ladder rather than nesting in it:
+//
+//	x > 100
+//	  ? "large"
+//	  : x > 10
+//	  ? "medium"
+//	  : "small"
+func (f *formatter) conditional(push dom.Sink, expr ast.Expr) {
+	f.placeGap(push)
+	var parts []ast.Expr
+	for {
+		args := expr.AsCall().Args()
+		parts = append(parts, args[0], args[1])
+		expr = args[2]
+		if expr.Kind() != ast.CallKind || expr.AsCall().FunctionName() != operators.Conditional || len(f.parentheses(expr)) > 0 {
+			parts = append(parts, expr)
+			break
+		}
+	}
+	push(dom.Group(formatWidth, func(push dom.Sink) {
+		f.expr(push, parts[0])
+		push(dom.Indent(formatIndent, func(push dom.Sink) {
+			for _, part := range parts[1:] {
+				f.gap = gapSoftline
+				f.emitTo(push, f.nextToken()) // ? or :
+				f.expr(push, part)
+			}
+		}))
+	}))
+}
+
+// asCall returns the call expr is written as, which for a macro is the call it
+// expanded from, and whether it is a call of a function or method rather than
+// an operator.
+func (f *formatter) asCall(expr ast.Expr) (call ast.CallExpr, macro, ok bool) {
+	if c, found := f.sourceInfo.GetMacroCall(expr.ID()); found && c.Kind() == ast.CallKind {
+		return c.AsCall(), true, true
+	}
+	if expr.Kind() != ast.CallKind {
+		return nil, false, false
+	}
+	switch fn := expr.AsCall().FunctionName(); fn {
+	case operators.Index, operators.OptIndex, operators.OptSelect:
+		return nil, false, false
+	default:
+		if _, isOperator := celOperatorSymbol(fn); isOperator {
+			return nil, false, false
+		}
+	}
+	return expr.AsCall(), false, true
+}
+
+// callChain writes a call, and with it the method calls it is the end of a
+// chain of, as in xs.filter(...).map(...). Two or more method calls in a row
+// are a group that, broken, puts each on an indented line of its own.
+func (f *formatter) callChain(push dom.Sink, expr ast.Expr) {
+	links := []ast.Expr{expr}
+	for {
+		call, _, _ := f.asCall(links[len(links)-1])
+		if !call.IsMemberFunction() || len(f.parentheses(call.Target())) > 0 {
+			break
+		}
+		if target, _, ok := f.asCall(call.Target()); !ok || !target.IsMemberFunction() {
+			break
+		}
+		links = append(links, call.Target())
+	}
+	if len(links) < 2 {
+		f.call(push, expr, true)
+		return
+	}
+	slices.Reverse(links)
+
+	f.placeGap(push)
+	push(dom.Group(formatWidth, func(push dom.Sink) {
+		first, _, _ := f.asCall(links[0])
+		f.expr(push, first.Target())
+		push(dom.Indent(formatIndent, func(push dom.Sink) {
+			for _, link := range links {
+				f.gap = gapSoftbreak
+				f.call(push, link, false)
+			}
+		}))
+	}))
+}
+
+// call writes a call, and the receiver of a method call if withReceiver. The
+// arguments of a macro that name the variables it binds stay on the line of
+// its name, as in xs.all(x, ..., the rest following when the call is broken.
+func (f *formatter) call(push dom.Sink, expr ast.Expr, withReceiver bool) {
+	call, macro, _ := f.asCall(expr)
+	if call.IsMemberFunction() && withReceiver {
 		f.expr(push, call.Target())
 	}
 	args := call.Args()
-	paren := f.anchor(id)
+	// A call is recorded at its parenthesis, a macro too.
+	paren := f.anchor(expr.ID())
 	if f.kind(paren) != gen.CELLexerLPAREN {
 		for _, arg := range args {
 			f.expr(push, arg)

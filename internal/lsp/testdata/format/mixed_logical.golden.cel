@@ -1,0 +1,3 @@
+request.auth.claims.role == "admin" ||
+request.auth.claims.groups.exists(g, g.startsWith("eng-")) &&
+  request.auth.claims.verified_email_address_present == true

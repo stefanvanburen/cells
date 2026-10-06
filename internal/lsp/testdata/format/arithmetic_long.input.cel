@@ -1,0 +1,1 @@
+request.order.base_price * request.order.quantity + request.order.shipping_cost + request.order.regional_tax_rate * request.order.base_price > limit
