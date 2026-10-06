@@ -1,0 +1,17 @@
+1:1 x variable
+1:3 != operator
+1:6 y variable
+1:8 && operator
+1:11 a variable
+1:13 >= operator
+1:16 b variable
+1:18 && operator
+1:21 c variable
+1:23 <= operator
+1:26 d variable
+1:28 && operator
+1:31 e variable
+1:33 % operator
+1:35 f variable
+1:37 == operator
+1:40 0 number

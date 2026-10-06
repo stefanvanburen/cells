@@ -1,0 +1,1 @@
+request.method == "GET" && count > 1 && type(count) == int

@@ -1,0 +1,11 @@
+1:1 // leading comment comment
+2:1 x variable
+2:3 > operator
+2:5 1 number
+2:7 && operator
+2:10 // trailing comment comment
+3:1 // between comment
+4:1 y variable
+4:3 < operator
+4:5 2 number
+4:7 // "not a string" [1] comment

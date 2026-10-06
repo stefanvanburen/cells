@@ -1,0 +1,13 @@
+1:1 int type.defaultLibrary
+1:5 x variable
+1:8 > operator
+1:10 0 number
+1:12 && operator
+1:15 string type.defaultLibrary
+1:22 y variable
+1:25 == operator
+1:28 'hello' string
+1:36 && operator
+1:39 x variable
+1:41 startsWith method.defaultLibrary
+1:52 'foo' string

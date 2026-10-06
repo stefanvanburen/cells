@@ -1,0 +1,13 @@
+1:1 request variable
+1:9 method property
+1:16 == operator
+1:19 "GET" string
+1:25 && operator
+1:28 count variable
+1:34 > operator
+1:36 1 number
+1:38 && operator
+1:41 type type.defaultLibrary
+1:46 count variable
+1:53 == operator
+1:56 int type.defaultLibrary

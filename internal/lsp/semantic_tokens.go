@@ -3,13 +3,19 @@ package lsp
 import (
 	"context"
 	"maps"
-	"slices"
+	"strings"
+	"sync"
 	"unicode/utf16"
+	"unicode/utf8"
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common/ast"
+	"cel.dev/cel-go/common/operators"
 	"cel.dev/cel-go/common/overloads"
+	"cel.dev/cel-go/common/stdlib"
 	"cel.dev/cel-go/common/types"
+	"cel.dev/cel-go/parser/gen"
+	"github.com/antlr4-go/antlr/v4"
 	"go.lsp.dev/protocol"
 )
 
@@ -19,366 +25,528 @@ func (s *server) SemanticTokensFull(ctx context.Context, params *protocol.Semant
 	if f == nil || docEnv == nil {
 		return nil, nil
 	}
-	return computeSemanticTokens(f, docEnv.celEnv)
+	return computeSemanticTokens(f, docEnv.celEnv), nil
 }
 
 // Semantic token types - indices into semanticTypeLegend.
 const (
-	semanticTypeProperty = iota
-	semanticTypeStruct
-	semanticTypeVariable
-	semanticTypeEnum
+	semanticTypeNamespace = iota
+	semanticTypeType
 	semanticTypeEnumMember
-	semanticTypeInterface
-	semanticTypeMethod
+	semanticTypeVariable
+	semanticTypeProperty
 	semanticTypeFunction
-	semanticTypeDecorator
+	semanticTypeMethod
 	semanticTypeMacro
-	semanticTypeNamespace
 	semanticTypeKeyword
-	semanticTypeModifier
 	semanticTypeComment
 	semanticTypeString
 	semanticTypeNumber
-	semanticTypeType
 	semanticTypeOperator
 )
 
 // Semantic token modifiers - encoded as a bitset.
 const (
-	semanticModifierDeprecated = 1 << iota
+	semanticModifierDeclaration = 1 << iota
 	semanticModifierDefaultLibrary
 )
 
 var (
 	semanticTypeLegend = []string{
-		string(protocol.SemanticTokenTypesProperty),
-		string(protocol.SemanticTokenTypesStruct),
-		string(protocol.SemanticTokenTypesVariable),
-		string(protocol.SemanticTokenTypesEnum),
-		string(protocol.SemanticTokenTypesEnumMember),
-		string(protocol.SemanticTokenTypesInterface),
-		string(protocol.SemanticTokenTypesMethod),
-		string(protocol.SemanticTokenTypesFunction),
-		string(protocol.SemanticTokenTypesDecorator),
-		string(protocol.SemanticTokenTypesMacro),
 		string(protocol.SemanticTokenTypesNamespace),
+		string(protocol.SemanticTokenTypesType),
+		string(protocol.SemanticTokenTypesEnumMember),
+		string(protocol.SemanticTokenTypesVariable),
+		string(protocol.SemanticTokenTypesProperty),
+		string(protocol.SemanticTokenTypesFunction),
+		string(protocol.SemanticTokenTypesMethod),
+		string(protocol.SemanticTokenTypesMacro),
 		string(protocol.SemanticTokenTypesKeyword),
-		string(protocol.SemanticTokenTypesModifier),
 		string(protocol.SemanticTokenTypesComment),
 		string(protocol.SemanticTokenTypesString),
 		string(protocol.SemanticTokenTypesNumber),
-		string(protocol.SemanticTokenTypesType),
 		string(protocol.SemanticTokenTypesOperator),
 	}
 	semanticModifierLegend = []string{
-		string(protocol.SemanticTokenModifiersDeprecated),
+		string(protocol.SemanticTokenModifiersDeclaration),
 		string(protocol.SemanticTokenModifiersDefaultLibrary),
 	}
 )
 
-// tokenInfo holds information about a single semantic token before encoding.
-type tokenInfo struct {
-	line    uint32
-	col     uint32
-	length  uint32
-	semType uint32
-	semMod  uint32
+// standardNames holds the names the standard library declares: its functions,
+// and the identifiers that name its types, such as int and google.protobuf.Timestamp.
+var standardNames = sync.OnceValue(func() (names struct{ functions, types map[string]bool }) {
+	names.functions = make(map[string]bool)
+	for _, fn := range stdlib.Functions() {
+		names.functions[fn.Name()] = true
+	}
+	names.types = make(map[string]bool)
+	for _, v := range stdlib.Types() {
+		names.types[v.Name()] = true
+	}
+	return names
+})
+
+// semanticClass is the token type and modifiers of an identifier.
+type semanticClass struct {
+	semType, semMod uint32
 }
 
-func computeSemanticTokens(f *file, celEnv *cel.Env) (*protocol.SemanticTokens, error) {
-	if f == nil || f.content == "" {
-		return nil, nil
+// celToken is a token as cel-go's lexer produces it, with the byte range of its
+// text and the rune offset the parser's source positions are measured in.
+type celToken struct {
+	kind       int
+	start, end int
+	runeStart  int32
+}
+
+// lexCEL returns the tokens of content, comments included and whitespace left
+// out. Lexing does not need content to parse.
+func lexCEL(content string) []celToken {
+	// ANTLR measures positions in runes; record the byte offset of each.
+	runeBytes := make([]int, 0, len(content)+1)
+	for i := range content {
+		runeBytes = append(runeBytes, i)
 	}
+	runeBytes = append(runeBytes, len(content))
 
-	var tokens []tokenInfo
-
-	isWhitespaceRune := func(b byte) bool {
-		return b == ' ' || b == '\t' || b == '\n' || b == '\r'
-	}
-
-	collectToken := func(byteStart, byteEnd int, semanticType, semanticModifier uint32) {
-		if byteStart < 0 || byteEnd <= byteStart || byteEnd > len(f.content) {
-			return
+	lexer := gen.NewCELLexer(antlr.NewInputStream(content))
+	lexer.RemoveErrorListeners()
+	var tokens []celToken
+	for {
+		t := lexer.NextToken()
+		if t.GetTokenType() == antlr.TokenEOF {
+			return tokens
 		}
-
-		// Trim whitespace from the token boundaries
-		adjustedStart := byteStart
-		adjustedEnd := byteEnd
-
-		// Skip leading whitespace
-		for adjustedStart < adjustedEnd && isWhitespaceRune(f.content[adjustedStart]) {
-			adjustedStart++
+		if t.GetTokenType() == gen.CELLexerWHITESPACE {
+			continue
 		}
-
-		// Skip trailing whitespace
-		for adjustedEnd > adjustedStart && isWhitespaceRune(f.content[adjustedEnd-1]) {
-			adjustedEnd--
-		}
-
-		if adjustedStart >= adjustedEnd {
-			return // All whitespace
-		}
-
-		line, col := byteOffsetToLineCol(f.content, adjustedStart)
-		// Calculate length in UTF-16 code units (what LSP expects)
-		tokenText := f.content[adjustedStart:adjustedEnd]
-		length := uint32(0)
-		for _, r := range tokenText {
-			length += uint32(utf16.RuneLen(r))
-		}
-		tokens = append(tokens, tokenInfo{
-			line:    line,
-			col:     col,
-			length:  length,
-			semType: semanticType,
-			semMod:  semanticModifier,
+		tokens = append(tokens, celToken{
+			kind:      t.GetTokenType(),
+			start:     runeBytes[t.GetStart()],
+			end:       runeBytes[t.GetStop()+1],
+			runeStart: int32(t.GetStart()),
 		})
 	}
-
-	nativeAST := f.ast(celEnv)
-	if nativeAST == nil {
-		return nil, nil
-	}
-	sourceInfo := nativeAST.SourceInfo()
-
-	// Walk the CEL AST and collect tokens
-	walkCELExpr(nativeAST.Expr(), sourceInfo, f.content, collectToken, nil)
-
-	// Process macro calls
-	collectMacroTokens(sourceInfo, f.content, collectToken)
-
-	// Sort tokens by position
-	slices.SortFunc(tokens, func(a, b tokenInfo) int {
-		if a.line != b.line {
-			return int(a.line) - int(b.line)
-		}
-		return int(a.col) - int(b.col)
-	})
-
-	// Delta-encode
-	var (
-		encoded           []uint32
-		prevLine, prevCol uint32
-	)
-	for _, tok := range tokens {
-		deltaCol := tok.col
-		if prevLine == tok.line {
-			deltaCol -= prevCol
-		}
-		encoded = append(encoded, tok.line-prevLine, deltaCol, tok.length, tok.semType, tok.semMod)
-		prevLine = tok.line
-		prevCol = tok.col
-	}
-	if len(encoded) == 0 {
-		return nil, nil
-	}
-	return &protocol.SemanticTokens{Data: encoded}, nil
 }
 
-// walkCELExpr recursively walks a CEL expression AST and collects semantic tokens.
-func walkCELExpr(
-	expr ast.Expr,
-	sourceInfo *ast.SourceInfo,
-	exprString string,
-	collectToken func(byteStart, byteEnd int, semanticType, semanticModifier uint32),
-	compVars map[string]bool,
-) {
-	if expr == nil || expr.Kind() == ast.UnspecifiedExprKind {
-		return
+// computeSemanticTokens returns the semantic tokens of f.
+//
+// The lexer decides where every token is and the classes that need no
+// context: comments, literals, keywords and most operators. The AST decides
+// the rest by pointing at tokens: each expression's recorded position is a
+// token, such as the dot of a field selection or the parenthesis of a call,
+// from which the names it involves are a step or two away. A file that does
+// not parse still gets the lexical classes.
+func computeSemanticTokens(f *file, celEnv *cel.Env) *protocol.SemanticTokens {
+	if f == nil || f.content == "" {
+		return nil
+	}
+	c := &tokenClassifier{
+		content:   f.content,
+		tokens:    lexCEL(f.content),
+		at:        make(map[int32]int),
+		classes:   make(map[int]semanticClass),
+		ternaries: make(map[int]bool),
+		indexes:   make(map[int]bool),
+	}
+	for i, t := range c.tokens {
+		c.at[t.runeStart] = i
 	}
 
-	offsetRange, hasOffset := sourceInfo.GetOffsetRange(expr.ID())
-	startLoc := sourceInfo.GetStartLocation(expr.ID())
+	// Checking rewrites the parsed AST in place, folding a qualified name like
+	// google.protobuf.Timestamp into one identifier, so check before walking
+	// whether or not the result is used: the walk then sees the same tree
+	// regardless of which request got to the file first.
+	_, _ = f.check(celEnv)
+	if nativeAST := f.ast(celEnv); nativeAST != nil {
+		c.sourceInfo = nativeAST.SourceInfo()
+		c.provider = celEnv.CELTypeProvider()
+		c.walk(nativeAST.Expr(), nil)
+		c.walkMacroCalls()
+	}
 
+	data := c.encode(f.content)
+	if len(data) == 0 {
+		return nil
+	}
+	return &protocol.SemanticTokens{Data: data}
+}
+
+// tokenClassifier assigns semantic classes to the tokens of one file.
+type tokenClassifier struct {
+	content string
+	tokens  []celToken
+	// at maps a rune offset to the token starting there.
+	at map[int32]int
+
+	// classes holds the class of each identifier token, by token index.
+	classes map[int]semanticClass
+	// ternaries and indexes hold the ? and [ tokens that are operators rather
+	// than optional-syntax markers and list brackets.
+	ternaries, indexes map[int]bool
+
+	sourceInfo *ast.SourceInfo
+	provider   types.Provider
+}
+
+// anchor returns the index of the token at the recorded position of the
+// expression with the given ID, or -1.
+func (c *tokenClassifier) anchor(id int64) int {
+	r, ok := c.sourceInfo.GetOffsetRange(id)
+	if !ok {
+		return -1
+	}
+	if i, ok := c.at[r.Start]; ok {
+		return i
+	}
+	return -1
+}
+
+// kind returns the kind of the token at index i, or 0 if there is none.
+func (c *tokenClassifier) kind(i int) int {
+	if i < 0 || i >= len(c.tokens) {
+		return 0
+	}
+	return c.tokens[i].kind
+}
+
+// step returns the index of the nearest token in direction dir (1 or -1) from
+// i that is not a comment, or -1.
+func (c *tokenClassifier) step(i, dir int) int {
+	for i += dir; i >= 0 && i < len(c.tokens); i += dir {
+		if c.tokens[i].kind != gen.CELLexerCOMMENT {
+			return i
+		}
+	}
+	return -1
+}
+
+// text returns the source text of the token at index i.
+func (c *tokenClassifier) text(i int) string {
+	return c.content[c.tokens[i].start:c.tokens[i].end]
+}
+
+func (c *tokenClassifier) isName(i int) bool {
+	k := c.kind(i)
+	return k == gen.CELLexerIDENTIFIER || k == gen.CELLexerESC_IDENTIFIER
+}
+
+// set records the class of the name token at i, unless it already has one.
+func (c *tokenClassifier) set(i int, semType, semMod uint32) {
+	if !c.isName(i) {
+		return
+	}
+	if _, ok := c.classes[i]; !ok {
+		c.classes[i] = semanticClass{semType, semMod}
+	}
+}
+
+// setQualified records the class of the name token at i, which ends the
+// possibly dotted name, and marks the qualifiers written before it as
+// namespaces. It stops early where the source spells fewer qualifiers than
+// name has, as when a container resolved the name.
+func (c *tokenClassifier) setQualified(i int, name string, semType, semMod uint32) {
+	c.set(i, semType, semMod)
+	for range strings.Count(strings.TrimPrefix(name, "."), ".") {
+		dot := c.step(i, -1)
+		if c.kind(dot) != gen.CELLexerDOT || !c.isName(c.step(dot, -1)) {
+			return
+		}
+		i = c.step(dot, -1)
+		c.set(i, semanticTypeNamespace, 0)
+	}
+}
+
+// setCallName records the class of the name of the call with the given ID,
+// which is recorded at its opening parenthesis. Macro expansion
+// records the calls it synthesizes at the parenthesis of the macro too, so the
+// name must match.
+func (c *tokenClassifier) setCallName(id int64, name string, semType, semMod uint32) {
+	if paren := c.anchor(id); c.kind(paren) == gen.CELLexerLPAREN {
+		i := c.step(paren, -1)
+		if c.isName(i) && c.text(i) == name[strings.LastIndex(name, ".")+1:] {
+			c.setQualified(i, name, semType, semMod)
+		}
+	}
+}
+
+// walk classifies the names in expr. scope holds the loop variables bound
+// where expr appears.
+func (c *tokenClassifier) walk(expr ast.Expr, scope map[string]bool) {
+	if expr == nil {
+		return
+	}
 	switch expr.Kind() {
 	case ast.IdentKind:
-		identName := expr.AsIdent()
-
-		var tokenType uint32
-		if isCELKeyword(identName) {
-			tokenType = semanticTypeKeyword
-		} else if compVars != nil && compVars[identName] {
-			tokenType = semanticTypeVariable
-		} else {
-			tokenType = semanticTypeProperty
+		name := expr.AsIdent()
+		i := c.anchor(expr.ID())
+		// An identifier the checker folded from a selection is recorded at the
+		// selection's last dot.
+		if c.kind(i) == gen.CELLexerDOT {
+			i = c.step(i, 1)
 		}
-
-		if hasOffset {
-			byteStart, byteStop := celOffsetRangeToByteRange(exprString, offsetRange)
-			collectToken(byteStart, byteStop, tokenType, 0)
-		}
+		semType, semMod := c.identClass(name, scope)
+		c.setQualified(i, name, semType, semMod)
 
 	case ast.SelectKind:
-		sel := expr.AsSelect()
-		if sel.Operand() != nil {
-			walkCELExpr(sel.Operand(), sourceInfo, exprString, collectToken, compVars)
-		}
-		if sel.Operand() != nil {
-			operandStart := sourceInfo.GetStartLocation(sel.Operand().ID())
-			if operandStart.Line() > 0 {
-				targetByteOffset := celRuneOffsetToByteOffset(exprString, int32(operandStart.Column())+sourceInfo.ComputeOffset(int32(operandStart.Line()), 0))
-				start, end := findMethodNameAfterDot(targetByteOffset, sel.FieldName(), exprString)
-				if start >= 0 {
-					collectToken(start, end, semanticTypeProperty, 0)
-				}
-			}
+		c.walk(expr.AsSelect().Operand(), scope)
+		// A selection is recorded at its dot, except for the presence test
+		// has() expands to, which is recorded at the macro and classified
+		// through the call has() was written as.
+		if dot := c.anchor(expr.ID()); c.kind(dot) == gen.CELLexerDOT {
+			c.set(c.step(dot, 1), semanticTypeProperty, 0)
 		}
 
 	case ast.CallKind:
 		call := expr.AsCall()
+		fn := call.FunctionName()
 		if call.IsMemberFunction() {
-			walkCELExpr(call.Target(), sourceInfo, exprString, collectToken, compVars)
+			c.walk(call.Target(), scope)
 		}
-
-		funcName := call.FunctionName()
-
-		if _, isOperator := celOperatorSymbol(funcName); isOperator {
-			if hasOffset {
-				byteStart, byteStop := celOffsetRangeToByteRange(exprString, offsetRange)
-				collectToken(byteStart, byteStop, semanticTypeOperator, 0)
+		switch fn {
+		case operators.Conditional:
+			c.ternaries[c.anchor(expr.ID())] = true
+		case operators.Index, operators.OptIndex:
+			c.indexes[c.anchor(expr.ID())] = true
+		case operators.OptSelect:
+			// x.?field: the field is a string literal recorded at its name.
+			if args := call.Args(); len(args) == 2 {
+				c.walk(args[0], scope)
+				c.set(c.anchor(args[1].ID()), semanticTypeProperty, 0)
 			}
-		} else {
-			var tokenType uint32
-			var tokenModifier uint32
-
-			if isCELMacroFunction(funcName) {
-				tokenType = semanticTypeMacro
-			} else if overloads.IsTypeConversionFunction(funcName) {
-				tokenType = semanticTypeType
-				tokenModifier = semanticModifierDefaultLibrary
-			} else if call.IsMemberFunction() {
-				tokenType = semanticTypeMethod
-			} else {
-				tokenType = semanticTypeFunction
-			}
-
-			if call.IsMemberFunction() {
-				targetStart := sourceInfo.GetStartLocation(call.Target().ID())
-				if targetStart.Line() > 0 {
-					targetByteOffset := celRuneOffsetToByteOffset(exprString, int32(targetStart.Column())+sourceInfo.ComputeOffset(int32(targetStart.Line()), 0))
-					start, end := findMethodNameAfterDot(targetByteOffset, funcName, exprString)
-					if start >= 0 {
-						collectToken(start, end, tokenType, tokenModifier)
-					}
-				}
-			} else if startLoc.Line() > 0 {
-				celByteOffset := celRuneOffsetToByteOffset(exprString, int32(startLoc.Column())+sourceInfo.ComputeOffset(int32(startLoc.Line()), 0))
-				funcStart := celByteOffset - len(funcName)
-				funcEnd := funcStart + len(funcName)
-				if funcStart >= 0 && funcEnd <= len(exprString) {
-					if exprString[funcStart:funcEnd] == funcName {
-						collectToken(funcStart, funcEnd, tokenType, tokenModifier)
-					}
-				}
+			return
+		default:
+			if _, isOperator := celOperatorSymbol(fn); !isOperator {
+				semType, semMod := functionClass(fn, call.IsMemberFunction())
+				c.setCallName(expr.ID(), fn, semType, semMod)
 			}
 		}
-
 		for _, arg := range call.Args() {
-			walkCELExpr(arg, sourceInfo, exprString, collectToken, compVars)
-		}
-
-	case ast.LiteralKind:
-		lit := expr.AsLiteral()
-		if hasOffset {
-			byteStart, byteStop := celOffsetRangeToByteRange(exprString, offsetRange)
-			switch lit.(type) {
-			case types.Null:
-				collectToken(byteStart, byteStop, semanticTypeKeyword, 0)
-			case types.String:
-				collectToken(byteStart, byteStop, semanticTypeString, 0)
-			case types.Int, types.Uint, types.Double:
-				collectToken(byteStart, byteStop, semanticTypeNumber, 0)
-			case types.Bytes:
-				collectToken(byteStart, byteStop, semanticTypeString, 0)
-			case types.Bool:
-				collectToken(byteStart, byteStop, semanticTypeKeyword, 0)
-			}
+			c.walk(arg, scope)
 		}
 
 	case ast.ListKind:
 		for _, elem := range expr.AsList().Elements() {
-			walkCELExpr(elem, sourceInfo, exprString, collectToken, compVars)
+			c.walk(elem, scope)
 		}
 
 	case ast.MapKind:
 		for _, entry := range expr.AsMap().Entries() {
 			mapEntry := entry.AsMapEntry()
-			walkCELExpr(mapEntry.Key(), sourceInfo, exprString, collectToken, compVars)
-			walkCELExpr(mapEntry.Value(), sourceInfo, exprString, collectToken, compVars)
+			c.walk(mapEntry.Key(), scope)
+			c.walk(mapEntry.Value(), scope)
 		}
 
 	case ast.StructKind:
-		for _, field := range expr.AsStruct().Fields() {
-			walkCELExpr(field.AsStructField().Value(), sourceInfo, exprString, collectToken, compVars)
+		s := expr.AsStruct()
+		if brace := c.anchor(expr.ID()); c.kind(brace) == gen.CELLexerLBRACE {
+			c.setQualified(c.step(brace, -1), s.TypeName(), semanticTypeType, 0)
+		}
+		for _, field := range s.Fields() {
+			// A field initializer is recorded at its colon.
+			if colon := c.anchor(field.ID()); c.kind(colon) == gen.CELLexerCOLON {
+				c.set(c.step(colon, -1), semanticTypeProperty, 0)
+			}
+			c.walk(field.AsStructField().Value(), scope)
 		}
 
 	case ast.ComprehensionKind:
 		comp := expr.AsComprehension()
-		walkCELExpr(comp.IterRange(), sourceInfo, exprString, collectToken, compVars)
-		walkCELExpr(comp.AccuInit(), sourceInfo, exprString, collectToken, compVars)
+		c.walk(comp.IterRange(), scope)
+		c.walk(comp.AccuInit(), scope)
 
-		extendedVars := compVars
-		if comp.IterVar() != "" || comp.AccuVar() != "" {
-			if compVars != nil {
-				extendedVars = make(map[string]bool, len(compVars)+2)
-				maps.Copy(extendedVars, compVars)
-			} else {
-				extendedVars = make(map[string]bool, 2)
-			}
-			if comp.IterVar() != "" {
-				extendedVars[comp.IterVar()] = true
-			}
-			if comp.AccuVar() != "" {
-				extendedVars[comp.AccuVar()] = true
+		bound := map[string]bool{comp.IterVar(): true, comp.AccuVar(): true}
+		if comp.HasIterVar2() {
+			bound[comp.IterVar2()] = true
+		}
+		// The declarations are arguments of the call the macro was written as.
+		if call, ok := c.sourceInfo.GetMacroCall(expr.ID()); ok && call.Kind() == ast.CallKind {
+			for _, arg := range call.AsCall().Args() {
+				if arg.Kind() == ast.IdentKind && bound[arg.AsIdent()] {
+					c.set(c.anchor(arg.ID()), semanticTypeVariable, semanticModifierDeclaration)
+				}
 			}
 		}
 
-		walkCELExpr(comp.LoopCondition(), sourceInfo, exprString, collectToken, extendedVars)
-		walkCELExpr(comp.LoopStep(), sourceInfo, exprString, collectToken, extendedVars)
-		walkCELExpr(comp.Result(), sourceInfo, exprString, collectToken, extendedVars)
+		inner := maps.Clone(scope)
+		if inner == nil {
+			inner = make(map[string]bool, len(bound))
+		}
+		maps.Copy(inner, bound)
+		c.walk(comp.LoopCondition(), inner)
+		c.walk(comp.LoopStep(), inner)
+		c.walk(comp.Result(), inner)
 	}
 }
 
-// collectMacroTokens processes CEL macro calls to highlight macro function names.
-func collectMacroTokens(
-	sourceInfo *ast.SourceInfo,
-	exprString string,
-	collectToken func(byteStart, byteEnd int, semanticType, semanticModifier uint32),
-) {
-	for macroID, macroExpr := range sourceInfo.MacroCalls() {
-		if macroExpr.Kind() != ast.CallKind {
+// walkMacroCalls classifies the macro names, which expansion leaves out of the
+// AST, along with anything else only the calls as written still hold: the
+// argument of has(), and the namespace of a macro like cel.bind.
+func (c *tokenClassifier) walkMacroCalls() {
+	for id, call := range c.sourceInfo.MacroCalls() {
+		if call.Kind() != ast.CallKind {
 			continue
 		}
-		call := macroExpr.AsCall()
-		funcName := call.FunctionName()
-		if !isCELMacroFunction(funcName) {
-			continue
-		}
-
-		startLoc := sourceInfo.GetStartLocation(macroID)
-		if startLoc.Line() <= 0 {
-			continue
-		}
-
-		if call.IsMemberFunction() {
-			targetStart := sourceInfo.GetStartLocation(call.Target().ID())
-			if targetStart.Line() > 0 {
-				targetByteOffset := celRuneOffsetToByteOffset(exprString, int32(targetStart.Column())+sourceInfo.ComputeOffset(int32(targetStart.Line()), 0))
-				start, end := findMethodNameAfterDot(targetByteOffset, funcName, exprString)
-				if start >= 0 {
-					collectToken(start, end, semanticTypeMacro, 0)
-				}
+		mc := call.AsCall()
+		c.setCallName(id, mc.FunctionName(), semanticTypeMacro, 0)
+		if mc.IsMemberFunction() {
+			target := mc.Target()
+			// A target the expansion kept was classified with it; one it
+			// dropped, like the cel of cel.bind, only names the macro.
+			if target.Kind() == ast.IdentKind {
+				c.set(c.anchor(target.ID()), semanticTypeNamespace, 0)
+			} else {
+				c.walk(target, nil)
 			}
+		}
+		for _, arg := range mc.Args() {
+			c.walk(arg, nil)
+		}
+	}
+}
+
+// identClass returns the class of an identifier, which is a variable unless
+// the environment knows the name as a type or an enum value.
+func (c *tokenClassifier) identClass(name string, scope map[string]bool) (semType, semMod uint32) {
+	if scope[name] {
+		return semanticTypeVariable, 0
+	}
+	value, found := c.provider.FindIdent(strings.TrimPrefix(name, "."))
+	switch {
+	case !found:
+		return semanticTypeVariable, 0
+	case standardNames().types[name]:
+		return semanticTypeType, semanticModifierDefaultLibrary
+	}
+	if _, isType := value.(*types.Type); isType {
+		return semanticTypeType, 0
+	}
+	return semanticTypeEnumMember, 0
+}
+
+// functionClass returns the class of the name of a call to fn.
+func functionClass(fn string, member bool) (semType, semMod uint32) {
+	if standardNames().functions[fn] {
+		semMod = semanticModifierDefaultLibrary
+	}
+	switch {
+	case overloads.IsTypeConversionFunction(fn):
+		return semanticTypeType, semMod
+	case member:
+		return semanticTypeMethod, semMod
+	}
+	return semanticTypeFunction, semMod
+}
+
+// encode returns the classified tokens of content in the LSP's relative
+// encoding.
+func (c *tokenClassifier) encode(content string) []uint32 {
+	e := tokenEncoder{content: content}
+	// brackets holds, for each bracket open at this point, whether it is an
+	// index operator; ternaryDepths holds the bracket depth of each ? whose :
+	// is still to come.
+	var (
+		brackets      []bool
+		ternaryDepths []int
+	)
+	for i, t := range c.tokens {
+		switch k := t.kind; {
+		case k == gen.CELLexerCOMMENT:
+			e.emit(t.start, t.end, semanticTypeComment, 0)
+		case k == gen.CELLexerSTRING || k == gen.CELLexerBYTES:
+			e.emit(t.start, t.end, semanticTypeString, 0)
+		case k == gen.CELLexerNUM_INT || k == gen.CELLexerNUM_UINT || k == gen.CELLexerNUM_FLOAT:
+			e.emit(t.start, t.end, semanticTypeNumber, 0)
+		case k == gen.CELLexerCEL_TRUE || k == gen.CELLexerCEL_FALSE || k == gen.CELLexerNUL:
+			e.emit(t.start, t.end, semanticTypeKeyword, 0)
+		case k >= gen.CELLexerEQUALS && k <= gen.CELLexerLOGICAL_OR,
+			k == gen.CELLexerMINUS, k == gen.CELLexerEXCLAM, k == gen.CELLexerPLUS,
+			k == gen.CELLexerSTAR, k == gen.CELLexerSLASH, k == gen.CELLexerPERCENT:
+			e.emit(t.start, t.end, semanticTypeOperator, 0)
+		case k == gen.CELLexerQUESTIONMARK:
+			if c.ternaries[i] {
+				e.emit(t.start, t.end, semanticTypeOperator, 0)
+				ternaryDepths = append(ternaryDepths, len(brackets))
+			}
+		case k == gen.CELLexerCOLON:
+			if n := len(ternaryDepths); n > 0 && ternaryDepths[n-1] == len(brackets) {
+				e.emit(t.start, t.end, semanticTypeOperator, 0)
+				ternaryDepths = ternaryDepths[:n-1]
+			}
+		case k == gen.CELLexerLBRACKET:
+			if c.indexes[i] {
+				e.emit(t.start, t.end, semanticTypeOperator, 0)
+			}
+			brackets = append(brackets, c.indexes[i])
+		case k == gen.CELLexerLPAREN || k == gen.CELLexerLBRACE:
+			brackets = append(brackets, false)
+		case k == gen.CELLexerRPRACKET || k == gen.CELLexerRPAREN || k == gen.CELLexerRBRACE:
+			if n := len(brackets); n > 0 {
+				if brackets[n-1] && k == gen.CELLexerRPRACKET {
+					e.emit(t.start, t.end, semanticTypeOperator, 0)
+				}
+				brackets = brackets[:n-1]
+			}
+		case k == gen.CELLexerIDENTIFIER || k == gen.CELLexerESC_IDENTIFIER:
+			if class, ok := c.classes[i]; ok {
+				e.emit(t.start, t.end, class.semType, class.semMod)
+			}
+		}
+	}
+	return e.data
+}
+
+// tokenEncoder appends tokens, which must arrive in order, in the LSP's
+// relative encoding.
+type tokenEncoder struct {
+	content string
+	data    []uint32
+
+	// pos is the byte offset that line and col, in UTF-16 code units, describe.
+	pos       int
+	line, col uint32
+	// prevLine and prevCol are the start of the last token emitted.
+	prevLine, prevCol uint32
+}
+
+// emit appends the token covering content[start:end], split at line breaks:
+// clients need not support tokens that span lines, and a triple-quoted string
+// can.
+func (e *tokenEncoder) emit(start, end int, semType, semMod uint32) {
+	for start < end {
+		lineEnd := end
+		if nl := strings.IndexByte(e.content[start:end], '\n'); nl >= 0 {
+			lineEnd = start + nl
+		}
+		segment := strings.TrimSuffix(e.content[start:lineEnd], "\r")
+		if segment != "" {
+			e.advance(start)
+			length := uint32(0)
+			for _, r := range segment {
+				length += uint32(utf16.RuneLen(r))
+			}
+			deltaCol := e.col
+			if e.line == e.prevLine {
+				deltaCol -= e.prevCol
+			}
+			e.data = append(e.data, e.line-e.prevLine, deltaCol, length, semType, semMod)
+			e.prevLine, e.prevCol = e.line, e.col
+		}
+		start = lineEnd + 1
+	}
+}
+
+// advance moves the position forward to the byte offset to.
+func (e *tokenEncoder) advance(to int) {
+	for e.pos < to {
+		r, size := utf8.DecodeRuneInString(e.content[e.pos:])
+		if r == '\n' {
+			e.line++
+			e.col = 0
 		} else {
-			celByteOffset := celRuneOffsetToByteOffset(exprString, int32(startLoc.Column())+sourceInfo.ComputeOffset(int32(startLoc.Line()), 0))
-			funcStart := celByteOffset - len(funcName)
-			funcEnd := funcStart + len(funcName)
-			if funcStart >= 0 && funcEnd <= len(exprString) {
-				if exprString[funcStart:funcEnd] == funcName {
-					collectToken(funcStart, funcEnd, semanticTypeMacro, 0)
-				}
-			}
+			e.col += uint32(utf16.RuneLen(r))
 		}
+		e.pos += size
 	}
 }

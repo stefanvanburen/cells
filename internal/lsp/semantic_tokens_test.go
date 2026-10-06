@@ -1,624 +1,115 @@
 package lsp_test
 
 import (
-	"slices"
+	"encoding/json"
+	"flag"
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
+	"unicode/utf16"
 
 	"go.lsp.dev/protocol"
+	"go.vanburen.xyz/cells/internal/lsp"
 	"go.vanburen.xyz/ok"
 )
 
-// semanticToken represents a decoded semantic token for easier testing.
-type semanticToken struct {
-	line      uint32
-	startChar uint32
-	length    uint32
-	tokenType uint32
-}
+var update = flag.Bool("update", false, "rewrite the semantic token golden files")
 
-// decodeSemanticTokens converts the delta-encoded token array into absolute positions.
-func decodeSemanticTokens(data []uint32) []semanticToken {
-	var tokens []semanticToken
-	var line, startChar uint32
-
-	for i := 0; i < len(data); i += 5 {
-		deltaLine := data[i]
-		deltaStartChar := data[i+1]
-		length := data[i+2]
-		tokenType := data[i+3]
-
-		line += deltaLine
-		if deltaLine != 0 {
-			startChar = deltaStartChar
-		} else {
-			startChar += deltaStartChar
-		}
-
-		tokens = append(tokens, semanticToken{
-			line:      line,
-			startChar: startChar,
-			length:    length,
-			tokenType: tokenType,
-		})
-	}
-	return tokens
-}
-
-// findToken searches for a token at the specified position with the given type.
-func findToken(tokens []semanticToken, line, startChar, length, tokenType uint32) bool {
-	return slices.ContainsFunc(tokens, func(token semanticToken) bool {
-		return token.line == line && token.startChar == startChar &&
-			token.length == length && token.tokenType == tokenType
-	})
-}
-
-// Semantic token types - must match semantic_tokens.go constants.
-const (
-	stProperty   = 0
-	stStruct     = 1
-	stVariable   = 2
-	stEnum       = 3
-	stEnumMember = 4
-	stInterface  = 5
-	stMethod     = 6
-	stFunction   = 7
-	stDecorator  = 8
-	stMacro      = 9
-	stNamespace  = 10
-	stKeyword    = 11
-	stModifier   = 12
-	stComment    = 13
-	stString     = 14
-	stNumber     = 15
-	stType       = 16
-	stOperator   = 17
-)
-
-// expectedToken represents an expected semantic token at a specific position.
-type expectedToken struct {
-	line      uint32
-	startChar uint32
-	length    uint32
-	tokenType uint32
-	desc      string
-}
-
-func getSemanticTokens(t *testing.T, celFile string) []semanticToken {
-	t.Helper()
-	ctx := t.Context()
-	testPath := getAbsPath(t, celFile)
-	clientConn, testURI := setupLSPServer(t, testPath)
-
-	var result *protocol.SemanticTokens
-	_, err := clientConn.Call(ctx, "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
-		TextDocument: protocol.TextDocumentIdentifier{
-			URI: testURI,
-		},
-	}, &result)
-	ok.MustNoError(t, err)
-	ok.True(t, result != nil)
-	ok.True(t, len(result.Data) > 0)
-	return decodeSemanticTokens(result.Data)
-}
-
-func getNilSemanticTokens(t *testing.T, celFile string) {
-	t.Helper()
-	ctx := t.Context()
-	testPath := getAbsPath(t, celFile)
-	clientConn, testURI := setupLSPServer(t, testPath)
-
-	var result *protocol.SemanticTokens
-	_, err := clientConn.Call(ctx, "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
-		TextDocument: protocol.TextDocumentIdentifier{
-			URI: testURI,
-		},
-	}, &result)
-	ok.MustNoError(t, err)
-	ok.True(t, result == nil)
-}
-
-func assertTokens(t *testing.T, tokens []semanticToken, expected []expectedToken) {
-	t.Helper()
-	for _, exp := range expected {
-		ok.True(t, findToken(tokens, exp.line, exp.startChar, exp.length, exp.tokenType))
-	}
-}
-
-// findTokenOnLine checks that at least one token of the given type exists on the given line.
-func findTokenOnLine(tokens []semanticToken, line, tokenType uint32) bool {
-	return slices.ContainsFunc(tokens, func(token semanticToken) bool {
-		return token.line == line && token.tokenType == tokenType
-	})
-}
-
-// testCaseWithFile defines a test case for semantic token parsing with a file reference.
-type testCaseWithFile struct {
-	name     string
-	file     string
-	expected []expectedToken
-}
-
-// testCaseNilResult defines a test case that expects no semantic tokens.
-type testCaseNilResult struct {
-	name string
-	file string
-}
-
+// TestSemanticTokens compares the semantic tokens of each .cel file under
+// testdata/semantic_tokens with the .tokens file beside it, which lists every
+// token on a line of its own: its 1-indexed line and UTF-16 column, its text,
+// and its type followed by any modifiers. The files in configured/ are checked
+// against the cel.yaml there.
 func TestSemanticTokens(t *testing.T) {
 	t.Parallel()
+	legend := semanticTokensLegend(t)
 
-	tests := []testCaseWithFile{
-		{
-			name: "basic",
-			file: "testdata/semantic_tokens/basic.cel",
-			expected: []expectedToken{
-				{0, 0, 1, stProperty, "'x' property"},
-				{0, 2, 1, stOperator, "'>' operator"},
-				{0, 4, 1, stNumber, "'0' number"},
-				{0, 6, 2, stOperator, "'&&' operator"},
-				{0, 9, 1, stProperty, "'x' property (2nd)"},
-				{0, 11, 4, stMethod, "'size' method"},
-				{0, 18, 1, stOperator, "'<' operator"},
-				{0, 20, 3, stNumber, "'100' number"},
-			},
-		},
-		{
-			name: "keywords",
-			file: "testdata/semantic_tokens/keywords.cel",
-			expected: []expectedToken{
-				{0, 0, 4, stKeyword, "'true' keyword"},
-				{0, 5, 2, stOperator, "'&&' operator"},
-				{0, 8, 5, stKeyword, "'false' keyword"},
-				{0, 14, 2, stOperator, "'||' operator"},
-				{0, 17, 4, stKeyword, "'null' keyword"},
-				{0, 22, 2, stOperator, "'==' operator"},
-				{0, 25, 1, stProperty, "'x' property"},
-			},
-		},
-		{
-			name: "functions",
-			file: "testdata/semantic_tokens/functions.cel",
-			expected: []expectedToken{
-				{0, 0, 3, stType, "'int' type conversion"},
-				{0, 4, 1, stProperty, "'x' in int()"},
-				{0, 7, 1, stOperator, "'>' operator"},
-				{0, 9, 1, stNumber, "'0' number"},
-				{0, 11, 2, stOperator, "'&&' operator"},
-				{0, 14, 6, stType, "'string' type conversion"},
-				{0, 21, 1, stProperty, "'y' in string()"},
-				{0, 24, 2, stOperator, "'==' operator"},
-				{0, 27, 7, stString, "'hello' string"},
-				{0, 35, 2, stOperator, "'&&' operator (2nd)"},
-				{0, 38, 1, stProperty, "'x' before startsWith"},
-				{0, 40, 10, stMethod, "'startsWith' method"},
-				{0, 51, 5, stString, "'foo' string"},
-			},
-		},
-		{
-			name: "macros",
-			file: "testdata/semantic_tokens/macros.cel",
-			expected: []expectedToken{
-				{0, 0, 3, stMacro, "'has' macro"},
-				{0, 4, 1, stProperty, "'x' in has()"},
-				{0, 6, 5, stProperty, "'field' property"},
-				{0, 13, 2, stOperator, "'&&' operator"},
-				{0, 17, 1, stNumber, "'1' number"},
-				{0, 20, 1, stNumber, "'2' number"},
-				{0, 23, 1, stNumber, "'3' number"},
-				{0, 26, 3, stMacro, "'all' macro"},
-				{0, 40, 2, stOperator, "'&&' operator (2nd)"},
-				{0, 43, 1, stProperty, "'x' before exists"},
-				{0, 45, 6, stMacro, "'exists' macro"},
-			},
-		},
-		{
-			name: "ternary",
-			file: "testdata/semantic_tokens/ternary.cel",
-			expected: []expectedToken{
-				{0, 0, 1, stProperty, "'x' property"},
-				{0, 2, 1, stOperator, "'>' operator"},
-				{0, 4, 1, stNumber, "'0' number"},
-				{0, 6, 1, stOperator, "'?' ternary operator"},
-				{0, 8, 10, stString, "'positive' string"},
-				{0, 21, 14, stString, "'non-positive' string"},
-			},
-		},
-		{
-			name: "map_literal",
-			file: "testdata/semantic_tokens/map_literal.cel",
-			expected: []expectedToken{
-				{0, 1, 5, stString, "'key' string key"},
-				{0, 8, 7, stString, "'value' string value"},
-				{0, 17, 5, stString, "'num' string key"},
-				{0, 24, 2, stNumber, "42 number"},
-			},
-		},
-		{
-			name: "negation",
-			file: "testdata/semantic_tokens/negation.cel",
-			expected: []expectedToken{
-				{0, 0, 1, stOperator, "'!' negation operator"},
-				{0, 1, 1, stProperty, "'x' property"},
-				{0, 3, 2, stOperator, "'&&' operator"},
-				{0, 6, 1, stOperator, "'!' negation operator (2nd)"},
-				{0, 8, 1, stProperty, "'y' property"},
-				{0, 10, 1, stOperator, "'>' operator"},
-				{0, 12, 1, stNumber, "'0' number"},
-			},
-		},
-		{
-			name: "unary_minus",
-			file: "testdata/semantic_tokens/unary_minus.cel",
-			expected: []expectedToken{
-				{0, 0, 1, stOperator, "'-' unary minus operator"},
-				{0, 1, 1, stProperty, "'x' property"},
-				{0, 3, 1, stOperator, "'+' operator"},
-				{0, 5, 2, stNumber, "'-3' negative number literal"},
-			},
-		},
-		{
-			name: "index",
-			file: "testdata/semantic_tokens/index.cel",
-			expected: []expectedToken{
-				{0, 0, 4, stProperty, "'list' property"},
-				{0, 5, 1, stNumber, "'0' number"},
-				{0, 8, 1, stOperator, "'+' operator"},
-				{0, 10, 7, stProperty, "'map_var' property"},
-				{0, 18, 5, stString, "'key' string"},
-			},
-		},
-		{
-			name: "numeric_types",
-			file: "testdata/semantic_tokens/numeric_types.cel",
-			expected: []expectedToken{
-				{0, 0, 4, stNumber, "3.14 double literal"},
-				{0, 5, 1, stOperator, "'+' operator"},
-				{0, 7, 5, stNumber, "0.5e2 double literal"},
-				{0, 13, 1, stOperator, "'+' operator (2nd)"},
-				{0, 15, 3, stNumber, "42u uint literal"},
-				{0, 19, 1, stOperator, "'+' operator (3rd)"},
-				{0, 21, 2, stNumber, "0u uint literal"},
-			},
-		},
-		{
-			name: "bytes",
-			file: "testdata/semantic_tokens/bytes.cel",
-			expected: []expectedToken{
-				{0, 0, 8, stString, `b"hello" bytes literal`},
-			},
-		},
-		{
-			name: "multiline",
-			file: "testdata/semantic_tokens/multiline.cel",
-			expected: []expectedToken{
-				{0, 0, 1, stProperty, "'x' property"},
-				{0, 2, 1, stOperator, "'>' operator"},
-				{0, 4, 1, stNumber, "'0' number"},
-				{0, 6, 2, stOperator, "'&&' operator"},
-				{1, 0, 1, stProperty, "'y' property"},
-				{1, 2, 1, stOperator, "'<' operator"},
-				{1, 4, 2, stNumber, "'10' number"},
-				{1, 7, 2, stOperator, "'&&' operator (2nd)"},
-				{2, 0, 1, stProperty, "'z' property"},
-				{2, 2, 2, stOperator, "'==' operator"},
-				{2, 5, 7, stString, "'hello' string"},
-			},
-		},
-		{
-			name: "nested_select",
-			file: "testdata/semantic_tokens/nested_select.cel",
-			expected: []expectedToken{
-				{0, 0, 1, stProperty, "'a' property"},
-				{0, 2, 1, stProperty, "'b' property"},
-				{0, 4, 1, stProperty, "'c' property"},
-				{0, 6, 1, stProperty, "'d' property"},
-			},
-		},
-		{
-			name: "chained_methods",
-			file: "testdata/semantic_tokens/chained_methods.cel",
-			expected: []expectedToken{
-				{0, 0, 1, stProperty, "'x' property"},
-				{0, 2, 4, stMethod, "'trim' method"},
-				{0, 9, 4, stMethod, "'size' method"},
-			},
-		},
-		{
-			name: "nested_macros",
-			file: "testdata/semantic_tokens/nested_macros.cel",
-			expected: []expectedToken{
-				{0, 1, 1, stNumber, "'1' number"},
-				{0, 4, 1, stNumber, "'2' number"},
-				{0, 7, 1, stNumber, "'3' number"},
-				{0, 10, 6, stMacro, "'filter' macro"},
-				{0, 27, 3, stMacro, "'all' macro"},
-			},
-		},
-		{
-			name: "in_operator",
-			file: "testdata/semantic_tokens/in_operator.cel",
-			expected: []expectedToken{
-				{0, 0, 3, stString, "'a' string"},
-				{0, 4, 2, stOperator, "'in' operator"},
-				{0, 8, 3, stString, "'a' string in list"},
-				{0, 13, 3, stString, "'b' string in list"},
-				{0, 18, 3, stString, "'c' string in list"},
-			},
-		},
-		{
-			name: "exists_one",
-			file: "testdata/semantic_tokens/exists_one.cel",
-			expected: []expectedToken{
-				{0, 1, 1, stNumber, "'1' number"},
-				{0, 4, 1, stNumber, "'2' number"},
-				{0, 7, 1, stNumber, "'3' number"},
-				{0, 10, 10, stMacro, "'exists_one' macro"},
-			},
-		},
-		{
-			name: "standalone_func",
-			file: "testdata/semantic_tokens/standalone_func.cel",
-			expected: []expectedToken{
-				{0, 0, 4, stFunction, "'size' standalone function"},
-				{0, 5, 1, stProperty, "'x' property"},
-				{0, 8, 1, stOperator, "'+' operator"},
-				{0, 10, 4, stFunction, "'size' standalone function (2nd)"},
-				{0, 15, 1, stProperty, "'y' property"},
-			},
-		},
-		{
-			name: "unicode_string",
-			file: "testdata/semantic_tokens/unicode_string.cel",
-			expected: []expectedToken{
-				{0, 0, 7, stString, `"héllo" string (7 UTF-16 units)`},
-				{0, 8, 1, stOperator, "'+' operator"},
-				{0, 10, 5, stString, `"日本語" string (5 UTF-16 units)`},
-			},
-		},
-		{
-			name: "raw_string",
-			file: "testdata/semantic_tokens/raw_string.cel",
-			expected: []expectedToken{
-				{0, 0, 22, stString, "raw string"},
-			},
-		},
-		{
-			name: "triple_quoted",
-			file: "testdata/semantic_tokens/triple_quoted.cel",
-			expected: []expectedToken{
-				{0, 0, 17, stString, `"""hello\nworld""" triple-quoted string`},
-			},
-		},
-		{
-			name: "double_quoted",
-			file: "testdata/semantic_tokens/double_quoted.cel",
-			expected: []expectedToken{
-				{0, 0, 7, stString, `"hello" double-quoted`},
-				{0, 8, 1, stOperator, "'+' operator"},
-				{0, 10, 7, stString, `"world" double-quoted`},
-			},
-		},
-		{
-			name: "escaped_string",
-			file: "testdata/semantic_tokens/escaped_string.cel",
-			expected: []expectedToken{
-				{0, 0, 14, stString, `"hello\nworld" escaped string`},
-			},
-		},
-		{
-			name: "map_macro",
-			file: "testdata/semantic_tokens/map_macro.cel",
-			expected: []expectedToken{
-				{0, 1, 1, stNumber, "'1' number"},
-				{0, 4, 1, stNumber, "'2' number"},
-				{0, 7, 1, stNumber, "'3' number"},
-				{0, 10, 3, stMacro, "'map' macro"},
-			},
-		},
-		{
-			name: "nested_ternary",
-			file: "testdata/semantic_tokens/nested_ternary.cel",
-			expected: []expectedToken{
-				{0, 0, 1, stProperty, "'x' property"},
-				{0, 2, 1, stOperator, "'>' operator"},
-				{0, 4, 1, stNumber, "'0' number"},
-				{0, 6, 1, stOperator, "'?' ternary"},
-				{0, 8, 5, stString, `"pos" string`},
-				{0, 16, 1, stProperty, "'x' property (2nd)"},
-				{0, 18, 1, stOperator, "'<' operator"},
-				{0, 20, 1, stNumber, "'0' number"},
-				{0, 22, 1, stOperator, "'?' ternary (2nd)"},
-				{0, 24, 5, stString, `"neg" string`},
-				{0, 32, 6, stString, `"zero" string`},
-			},
-		},
-		{
-			name: "empty_collections",
-			file: "testdata/semantic_tokens/empty_collections.cel",
-			expected: []expectedToken{
-				{0, 3, 1, stOperator, "'+' operator"},
-				{0, 8, 2, stOperator, "'==' operator"},
-				{0, 11, 1, stProperty, "'x' property"},
-			},
-		},
-		{
-			name: "nested_calls",
-			file: "testdata/semantic_tokens/nested_calls.cel",
-			expected: []expectedToken{
-				{0, 0, 4, stFunction, "'size' function"},
-				{0, 5, 6, stType, "'string' type conversion"},
-				{0, 12, 1, stProperty, "'x' property"},
-			},
-		},
-		{
-			name: "hex",
-			file: "testdata/semantic_tokens/hex.cel",
-			expected: []expectedToken{
-				{0, 0, 4, stNumber, "0xFF hex"},
-				{0, 5, 1, stOperator, "'+' operator"},
-				{0, 7, 4, stNumber, "0x10 hex"},
-			},
-		},
-		{
-			name: "more_operators",
-			file: "testdata/semantic_tokens/more_operators.cel",
-			expected: []expectedToken{
-				{0, 0, 1, stProperty, "'x' property"},
-				{0, 2, 2, stOperator, "'!=' operator"},
-				{0, 5, 1, stProperty, "'y' property"},
-				{0, 7, 2, stOperator, "'&&' operator"},
-				{0, 10, 1, stProperty, "'a' property"},
-				{0, 12, 2, stOperator, "'>=' operator"},
-				{0, 15, 1, stProperty, "'b' property"},
-				{0, 17, 2, stOperator, "'&&' operator (2nd)"},
-				{0, 20, 1, stProperty, "'c' property"},
-				{0, 22, 2, stOperator, "'<=' operator"},
-				{0, 25, 1, stProperty, "'d' property"},
-				{0, 27, 2, stOperator, "'&&' operator (3rd)"},
-				{0, 30, 1, stProperty, "'e' property"},
-				{0, 32, 1, stOperator, "'%' operator"},
-				{0, 34, 1, stProperty, "'f' property"},
-				{0, 36, 2, stOperator, "'==' operator"},
-				{0, 39, 1, stNumber, "'0' number"},
-			},
-		},
-		{
-			name: "parenthesized",
-			file: "testdata/semantic_tokens/parenthesized.cel",
-			expected: []expectedToken{
-				{0, 1, 1, stProperty, "'x' property"},
-				{0, 3, 1, stOperator, "'+' operator"},
-				{0, 5, 1, stProperty, "'y' property"},
-				{0, 8, 1, stOperator, "'*' operator"},
-				{0, 10, 1, stProperty, "'z' property"},
-			},
-		},
-		{
-			name: "select_on_call",
-			file: "testdata/semantic_tokens/select_on_call.cel",
-			expected: []expectedToken{
-				{0, 0, 6, stType, "'string' type conversion"},
-				{0, 7, 1, stProperty, "'x' property"},
-				{0, 10, 4, stMethod, "'size' method"},
-			},
-		},
-	}
+	files, err := filepath.Glob("testdata/semantic_tokens/*.cel")
+	ok.MustNoError(t, err)
+	configured, err := filepath.Glob("testdata/semantic_tokens/configured/*.cel")
+	ok.MustNoError(t, err)
+	files = append(files, configured...)
 
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
+	for _, file := range files {
+		name := strings.TrimPrefix(strings.TrimSuffix(file, ".cel"), "testdata/semantic_tokens/")
+		t.Run(name, func(t *testing.T) {
 			t.Parallel()
-			tokens := getSemanticTokens(t, tt.file)
-			assertTokens(t, tokens, tt.expected)
+			got := describeSemanticTokens(t, file, legend)
+			golden := strings.TrimSuffix(file, ".cel") + ".tokens"
+			if *update {
+				ok.MustNoError(t, os.WriteFile(golden, []byte(got), 0o600))
+				return
+			}
+			want, err := os.ReadFile(golden)
+			ok.MustNoError(t, err)
+			ok.Equal(t, got, string(want))
 		})
 	}
 }
 
-func TestSemanticTokensNilResult(t *testing.T) {
-	t.Parallel()
-
-	tests := []testCaseNilResult{
-		{name: "parse_error", file: "testdata/semantic_tokens/parse_error.cel"},
-		{name: "empty", file: "testdata/semantic_tokens/empty.cel"},
-		{name: "whitespace", file: "testdata/semantic_tokens/whitespace.cel"},
+// semanticTokensLegend returns the legend the server advertises.
+func semanticTokensLegend(t *testing.T) protocol.SemanticTokensLegend {
+	t.Helper()
+	conn := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{})
+	var result struct {
+		Capabilities struct {
+			SemanticTokensProvider struct {
+				Legend protocol.SemanticTokensLegend `json:"legend"`
+			} `json:"semanticTokensProvider"`
+		} `json:"capabilities"`
 	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			getNilSemanticTokens(t, tt.file)
-		})
-	}
+	var raw json.RawMessage
+	_, err := conn.Call(t.Context(), "initialize", protocol.InitializeParams{}, &raw)
+	ok.MustNoError(t, err)
+	ok.MustNoError(t, json.Unmarshal(raw, &result))
+	return result.Capabilities.SemanticTokensProvider.Legend
 }
 
-func TestSemanticTokensComprehensive(t *testing.T) {
-	t.Parallel()
-	tokens := getSemanticTokens(t, "testdata/semantic_tokens/comprehensive.cel")
+// describeSemanticTokens returns the semantic tokens of celFile in the format
+// of the golden files.
+func describeSemanticTokens(t *testing.T, celFile string, legend protocol.SemanticTokensLegend) string {
+	t.Helper()
+	testPath := getAbsPath(t, celFile)
+	conn, testURI := setupLSPServer(t, testPath)
 
-	// The comprehensive file is 121 lines with comments and exercises every feature.
-	// There should be a significant number of tokens.
-	ok.True(t, len(tokens) >= 80)
-
-	// Spot-check specific token types on specific lines (0-indexed).
-	// Line 7: (x + y) * 2 - z / w % 3 >= 10 &&
-	ok.True(t, findTokenOnLine(tokens, 7, stOperator))
-	ok.True(t, findTokenOnLine(tokens, 7, stNumber))
-
-	// Line 10: "hello world".contains("world") &&
-	ok.True(t, findTokenOnLine(tokens, 10, stString))
-	ok.True(t, findTokenOnLine(tokens, 10, stMethod))
-
-	// Line 11: "hello".startsWith("he") &&
-	ok.True(t, findTokenOnLine(tokens, 11, stMethod))
-
-	// Line 14: size("test") == 4 &&
-	ok.True(t, findTokenOnLine(tokens, 14, stFunction))
-
-	// Line 17: int("42") + double("3.14") > 0.0 &&
-	ok.True(t, findTokenOnLine(tokens, 17, stType))
-
-	// Line 20: bool("true") == true &&
-	ok.True(t, findTokenOnLine(tokens, 20, stKeyword))
-
-	// Line 33: has({"field": true}.field) &&
-	ok.True(t, findTokenOnLine(tokens, 33, stMacro))
-
-	// Line 36: "a" in ["a", "b", "c"] &&
-	ok.True(t, findTokenOnLine(tokens, 36, stOperator))
-
-	// Line 40: [1, 2, 3].all(i, i > 0) &&
-	ok.True(t, findTokenOnLine(tokens, 40, stMacro))
-
-	// Line 43: [1, 2, 3].exists(i, i == 2) &&
-	ok.True(t, findTokenOnLine(tokens, 43, stMacro))
-
-	// Line 46: [1, 2, 3].exists_one(i, i > 2) &&
-	ok.True(t, findTokenOnLine(tokens, 46, stMacro))
-
-	// Line 49: [1, 2, 3].map(i, i * 2) == [2, 4, 6] &&
-	ok.True(t, findTokenOnLine(tokens, 49, stMacro))
-
-	// Line 52: [1, 2, 3, 4, 5].filter(i, i > 3) == [4, 5] &&
-	ok.True(t, findTokenOnLine(tokens, 52, stMacro))
-
-	// Line 55: nested macros
-	ok.True(t, findTokenOnLine(tokens, 55, stMacro))
-
-	// Line 58: ternary
-	ok.True(t, findTokenOnLine(tokens, 58, stOperator))
-
-	// Line 62: true || false &&
-	ok.True(t, findTokenOnLine(tokens, 62, stKeyword))
-
-	// Line 73: !false &&
-	ok.True(t, findTokenOnLine(tokens, 73, stKeyword))
-
-	// Line 81: null == null &&
-	ok.True(t, findTokenOnLine(tokens, 81, stKeyword))
-
-	// Line 84: b"hello" == bytes("hello") &&
-	ok.True(t, findTokenOnLine(tokens, 84, stString))
-
-	// Line 91: "Hello World".endsWith("World") &&
-	ok.True(t, findTokenOnLine(tokens, 91, stMethod))
-
-	// Line 96: multi-line comprehension filter
-	ok.True(t, findTokenOnLine(tokens, 96, stMacro))
-
-	// Line 102: duration("1h") > duration("30m") &&
-	ok.True(t, findTokenOnLine(tokens, 102, stType))
-
-	// Line 103: timestamp type conversion
-	ok.True(t, findTokenOnLine(tokens, 103, stType))
-
-	// Line 120: x + y == z
-	ok.True(t, findTokenOnLine(tokens, 120, stOperator))
-
-	// Verify all major token types are present across the file.
-	typesSeen := make(map[uint32]bool)
-	for _, tok := range tokens {
-		typesSeen[tok.tokenType] = true
+	var result *protocol.SemanticTokens
+	_, err := conn.Call(t.Context(), "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
+		TextDocument: protocol.TextDocumentIdentifier{URI: testURI},
+	}, &result)
+	ok.MustNoError(t, err)
+	if result == nil {
+		return ""
 	}
-	for _, expected := range []uint32{stOperator, stNumber, stString, stMethod, stFunction, stType, stMacro, stKeyword, stVariable} {
-		ok.True(t, typesSeen[expected])
+
+	content, err := os.ReadFile(testPath)
+	ok.MustNoError(t, err)
+	lines := strings.Split(string(content), "\n")
+
+	var b strings.Builder
+	var line, col uint32
+	data := result.Data
+	ok.Equal(t, len(data)%5, 0)
+	for i := 0; i+5 <= len(data); i += 5 {
+		deltaLine, deltaCol, length, semType, semMod := data[i], data[i+1], data[i+2], data[i+3], data[i+4]
+		if deltaLine != 0 {
+			col = 0
+		}
+		line += deltaLine
+		col += deltaCol
+
+		units := utf16.Encode([]rune(lines[line]))
+		ok.True(t, col+length <= uint32(len(units)), ok.Sprintf("token at %d:%d runs past the end of its line", line+1, col+1))
+		text := string(utf16.Decode(units[col : col+length]))
+
+		class := []string{legend.TokenTypes[semType]}
+		for bit, modifier := range legend.TokenModifiers {
+			if semMod&(1<<bit) != 0 {
+				class = append(class, modifier)
+			}
+		}
+		fmt.Fprintf(&b, "%d:%d %s %s\n", line+1, col+1, text, strings.Join(class, "."))
 	}
+	return b.String()
 }

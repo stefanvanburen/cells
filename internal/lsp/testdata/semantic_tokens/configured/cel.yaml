@@ -1,0 +1,12 @@
+name: semantic tokens
+variables:
+  - name: request
+    type: "map<string, dyn>"
+  - name: count
+    type: "int"
+extensions:
+  - name: bindings
+  - name: comprehensions
+  - name: math
+  - name: optional
+  - name: strings

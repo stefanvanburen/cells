@@ -1,0 +1,7 @@
+1:1 true keyword
+1:6 && operator
+1:9 false keyword
+1:15 || operator
+1:18 null keyword
+1:23 == operator
+1:26 x variable

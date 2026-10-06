@@ -1,0 +1,3 @@
+google.protobuf.NullValue.NULL_VALUE == 0 &&
+type(x) == google.protobuf.Duration &&
+type(1) == int

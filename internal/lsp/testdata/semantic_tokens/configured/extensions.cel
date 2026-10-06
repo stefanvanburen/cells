@@ -1,0 +1,6 @@
+math.greatest(count, 1) > 0 &&
+cel.bind(n, count + 1, n * n) > 0 &&
+{"a": 1}.all(k, v, v > 0) &&
+request.?method.orValue("") == "" &&
+request[?"path"].hasValue() &&
+"x".upperAscii() == "X"

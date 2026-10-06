@@ -1,0 +1,8 @@
+1:1 x variable
+1:3 > operator
+1:5 0 number
+1:7 && operator
+1:10 x variable
+1:12 size method.defaultLibrary
+1:19 < operator
+1:21 100 number

@@ -1,0 +1,9 @@
+1:1 list type.defaultLibrary
+1:5 [ operator
+1:6 0 number
+1:7 ] operator
+1:9 + operator
+1:11 map_var variable
+1:18 [ operator
+1:19 'key' string
+1:24 ] operator

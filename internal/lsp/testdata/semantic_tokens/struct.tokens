@@ -1,0 +1,20 @@
+1:1 google namespace
+1:8 protobuf namespace
+1:17 Timestamp type
+1:27 seconds property
+1:36 1 number
+1:39 nanos property
+1:46 2 number
+1:49 seconds property
+1:57 > operator
+1:59 0 number
+1:61 && operator
+2:2 google namespace
+2:9 protobuf namespace
+2:18 Duration type
+3:3 // a comment between fields comment
+4:3 seconds property
+4:12 3 number
+5:3 seconds property
+5:11 == operator
+5:14 3 number

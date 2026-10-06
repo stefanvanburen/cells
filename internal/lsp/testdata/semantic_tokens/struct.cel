@@ -1,0 +1,5 @@
+google.protobuf.Timestamp{seconds: 1, nanos: 2}.seconds > 0 &&
+.google.protobuf.Duration{
+  // a comment between fields
+  seconds: 3,
+}.seconds == 3

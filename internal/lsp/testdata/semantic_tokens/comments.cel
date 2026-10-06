@@ -1,0 +1,4 @@
+// leading comment
+x > 1 && // trailing comment
+// between
+y < 2 // "not a string" [1]
