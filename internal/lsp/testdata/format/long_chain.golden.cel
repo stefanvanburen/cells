@@ -1,0 +1,3 @@
+request.auth.claims.role == "admin" ||
+request.auth.claims.groups.exists(g, g.startsWith("eng-") && g.size() < 64) ||
+request.path.startsWith("/public/") && request.method in ["GET", "HEAD", "OPTIONS"]

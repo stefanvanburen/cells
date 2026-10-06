@@ -89,10 +89,13 @@ func (n *spanNode) childAt(offset int) *spanNode {
 type spanBuilder struct {
 	*sourceTokens
 	partners map[int]int
+	// spans holds the node built for each expression, by ID, without any
+	// parentheses around it.
+	spans map[int64]*spanNode
 }
 
 func newSpanBuilder(t *sourceTokens) *spanBuilder {
-	return &spanBuilder{sourceTokens: t, partners: t.brackets()}
+	return &spanBuilder{sourceTokens: t, partners: t.brackets(), spans: make(map[int64]*spanNode)}
 }
 
 // newNode returns a node spanning children, which may include nils.
@@ -149,7 +152,9 @@ func (b *spanBuilder) build(expr ast.Expr) *spanNode {
 	}
 	// A macro is selected as the call it was written as, not its expansion.
 	if call, ok := b.sourceInfo.GetMacroCall(expr.ID()); ok && call.Kind() == ast.CallKind {
-		return b.group(b.call(expr.ID(), call.AsCall()))
+		n := b.call(expr.ID(), call.AsCall())
+		b.spans[expr.ID()] = n
+		return b.group(n)
 	}
 
 	var n *spanNode
@@ -213,6 +218,9 @@ func (b *spanBuilder) build(expr ast.Expr) *spanNode {
 		// A comprehension the parser kept no call for; its range is the only
 		// part known to be written in the source.
 		n = newNode(b.build(expr.AsComprehension().IterRange()))
+	}
+	if n != nil {
+		b.spans[expr.ID()] = n
 	}
 	return b.group(n)
 }

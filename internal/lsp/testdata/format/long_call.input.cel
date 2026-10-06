@@ -1,0 +1,1 @@
+math.greatest(request.limits.cpu_millicores_requested, request.limits.memory_bytes_requested, request.limits.gpu_count) > 0

@@ -1,1 +1,1 @@
-"hello \"world\" there" + "x" // real comment
+"""hello "world" there""" + "x" // real comment

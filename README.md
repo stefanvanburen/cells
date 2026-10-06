@@ -13,7 +13,7 @@ $ go install go.vanburen.xyz/cells/cmd/cells@latest
 
 * Semantic highlighting
 * Diagnostics
-* Formatting
+* Formatting (keeps comments and literals as written, breaking lines at 100 columns)
 * Hover (including declared variable types, and message field types and comments)
 * References
 * Go to definition

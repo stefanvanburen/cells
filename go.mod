@@ -6,6 +6,7 @@ require (
 	cel.dev/cel-go v0.32.0
 	cel.dev/cel-go/ext/security v0.32.0
 	github.com/antlr4-go/antlr/v4 v4.13.1
+	github.com/bufbuild/protocompile v0.14.2-0.20260917202354-386f9fcfc7b9
 	github.com/pressly/cli v0.8.0
 	go.lsp.dev/jsonrpc2 v1.0.1
 	go.lsp.dev/protocol v1.0.1
@@ -21,15 +22,16 @@ require (
 	github.com/BurntSushi/toml v1.6.0 // indirect
 	github.com/go-json-experiment/json v0.0.0-20260623181947-01eb4420fa68 // indirect
 	github.com/google/go-cmp v0.7.0 // indirect
+	github.com/rivo/uniseg v0.4.7 // indirect
 	github.com/stefanvanburen/colorcmp v0.3.0 // indirect
-	golang.org/x/exp v0.0.0-20240823005443-9b4947da3948 // indirect
+	golang.org/x/exp v0.0.0-20260709172345-9ea1abe57597 // indirect
 	golang.org/x/exp/typeparams v0.0.0-20260209203927-2842357ff358 // indirect
-	golang.org/x/mod v0.36.0 // indirect
-	golang.org/x/sync v0.20.0 // indirect
-	golang.org/x/sys v0.45.0 // indirect
+	golang.org/x/mod v0.38.0 // indirect
+	golang.org/x/sync v0.22.0 // indirect
+	golang.org/x/sys v0.47.0 // indirect
 	golang.org/x/term v0.41.0 // indirect
 	golang.org/x/text v0.36.0 // indirect
-	golang.org/x/tools v0.45.0 // indirect
+	golang.org/x/tools v0.48.0 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20240826202546-f6391c0de4c7 // indirect
 	google.golang.org/genproto/googleapis/rpc v0.0.0-20240826202546-f6391c0de4c7 // indirect
 	honnef.co/go/tools v0.8.0 // indirect

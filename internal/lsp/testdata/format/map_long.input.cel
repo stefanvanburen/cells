@@ -1,0 +1,1 @@
+{"name": request.user.display_name, "email": request.user.primary_email_address, "id": request.user.id}

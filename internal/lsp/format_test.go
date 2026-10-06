@@ -55,6 +55,9 @@ func TestFormat(t *testing.T) {
 
 			got := applyEdits(string(input), edits)
 			ok.Equal(t, got, string(golden))
+
+			// Formatted source is left as it is.
+			ok.Equal(t, len(requestFormatting(t, tt.golden)), 0)
 		})
 	}
 }

@@ -1,1 +1,1 @@
-(x > 0) ? "positive" : "negative"
+x > 0 ? "positive" : "negative"

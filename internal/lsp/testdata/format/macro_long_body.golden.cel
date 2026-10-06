@@ -1,0 +1,3 @@
+request.items.all(item,
+  item.price > 0 && item.quantity > 0 && item.sku.matches("^[A-Z]{3}-[0-9]{4}$") && item.name != ""
+)

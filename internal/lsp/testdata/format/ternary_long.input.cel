@@ -1,0 +1,1 @@
+x > 100 ? "large value that is long enough to need wrapping" : x > 10 ? "medium value, also long" : "small"

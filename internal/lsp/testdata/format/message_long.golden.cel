@@ -1,0 +1,4 @@
+google.protobuf.Duration{
+  seconds: request.timeout_seconds_requested_by_the_client,
+  nanos: request.timeout_nanos,
+}.seconds > 0
