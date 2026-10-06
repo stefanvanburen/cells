@@ -3,6 +3,7 @@ package lsp
 import (
 	"cel.dev/cel-go/cel"
 	celast "cel.dev/cel-go/common/ast"
+	"cel.dev/cel-go/common/containers"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )
@@ -108,7 +109,7 @@ func (f *file) identifierAt(celEnv *cel.Env, pos protocol.Position) (*celast.AST
 
 	sourceInfo := nativeAST.SourceInfo()
 	if info := findIdentifierAtPosition(nativeAST.Expr(), sourceInfo, f.content, offset); info != nil {
-		return nativeAST, info
+		return variableOrNil(celEnv, nativeAST, info)
 	}
 
 	// Nothing in the AST covers the offset. A loop variable's declaration is
@@ -128,7 +129,55 @@ func (f *file) identifierAt(celEnv *cel.Env, pos protocol.Position) (*celast.AST
 	if info == nil {
 		return nil, nil
 	}
+	return variableOrNil(celEnv, nativeAST, info)
+}
+
+// variableOrNil returns nativeAST and info, unless info is an identifier that
+// names something the environment declares rather than a variable: a type
+// like int, the start of a qualified type or enum value like
+// google.protobuf.NullValue.NULL_VALUE, or the namespace of a function like
+// math.greatest. None of those is this file's to rename, and none has
+// occurrences to find beyond its own spelling.
+func variableOrNil(celEnv *cel.Env, nativeAST *celast.AST, info *identifierInfo) (*celast.AST, *identifierInfo) {
+	if info.kind != identifierKindTopLevel {
+		return nativeAST, info
+	}
+	root, sourceInfo := nativeAST.Expr(), nativeAST.SourceInfo()
+	if _, isLoopVar := determineIdentifierScope(info.exprID, info.name, root, sourceInfo).(loopVarScope); isLoopVar {
+		return nativeAST, info
+	}
+
+	provider := celEnv.CELTypeProvider()
+	_, declared := provider.FindIdent(info.name)
+	celast.PreOrderVisit(root, celast.NewExprVisitor(func(e celast.Expr) {
+		switch {
+		case declared:
+		case e.Kind() == celast.SelectKind && chainRootID(e) == info.exprID:
+			if name, ok := containers.ToQualifiedName(e); ok {
+				_, declared = provider.FindIdent(name)
+			}
+		case e.Kind() == celast.CallKind && e.AsCall().IsMemberFunction() && chainRootID(e.AsCall().Target()) == info.exprID:
+			if namespace, ok := containers.ToQualifiedName(e.AsCall().Target()); ok {
+				declared = celEnv.HasFunction(namespace + "." + e.AsCall().FunctionName())
+			}
+		}
+	}))
+	if declared {
+		return nil, nil
+	}
 	return nativeAST, info
+}
+
+// chainRootID returns the ID of the identifier a chain of field selections
+// such as a.b.c starts from, or 0 if expr is not such a chain.
+func chainRootID(expr celast.Expr) int64 {
+	for expr.Kind() == celast.SelectKind {
+		expr = expr.AsSelect().Operand()
+	}
+	if expr.Kind() != celast.IdentKind {
+		return 0
+	}
+	return expr.ID()
 }
 
 // identifierOccurrencesAt returns the ranges of every occurrence of the

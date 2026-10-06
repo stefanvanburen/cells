@@ -329,6 +329,44 @@ func TestRename(t *testing.T) {
 	}
 }
 
+// A name the environment declares — a type, the start of a qualified type or
+// enum value, or a function's namespace — is not a variable of the file's, so
+// there is nothing to rename or highlight. A variable that merely shares a
+// prefix with one, or a loop variable named like a type, still is.
+func TestRenameSkipsDeclaredNames(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		src       string
+		character uint32
+		renamable bool
+	}{
+		{"qualified_enum", "google.protobuf.NullValue.NULL_VALUE == 0", 0, false},
+		{"qualified_type", "type(1) == google.protobuf.Duration", 11, false},
+		{"builtin_type", "type(1) == int", 11, false},
+		{"function_namespace", "math.greatest(1, 2) > 0", 0, false},
+		{"variable_field", "request.auth == 1", 0, true},
+		{"variable_method", "request.size() > 0", 0, true},
+		{"loop_variable_named_like_a_type", "[1].all(int, int > 0)", 13, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			ok.MustNoError(t, os.WriteFile(filepath.Join(dir, lsp.ConfigFileName), []byte("name: test\nextensions:\n  - name: math\n"), 0o600))
+			path := filepath.Join(dir, "test.cel")
+			ok.MustNoError(t, os.WriteFile(path, []byte(tt.src), 0o600))
+			conn, uri := setupLSPServer(t, path)
+			pos := protocol.Position{Character: tt.character}
+
+			ok.Equal(t, requestPrepareRename(t, conn, uri, pos) != nil, tt.renamable)
+			ok.Equal(t, requestRename(t, conn, uri, pos, "renamed") != nil, tt.renamable)
+			ok.Equal(t, len(requestDocumentHighlight(t, conn, uri, pos)) > 0, tt.renamable)
+		})
+	}
+}
+
 // A loop variable's scope is the macro that binds it, which spans no source of
 // its own after expansion; prepareRename still answers with the occurrence
 // under the cursor.
