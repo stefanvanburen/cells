@@ -22,6 +22,7 @@ $ go install go.vanburen.xyz/cells/cmd/cells@latest
 * Variable renaming
 * Inlay hints (expression evaluation)
 * Selection ranges (expand and shrink selection by expression)
+* Folding ranges (brackets spanning lines, comment blocks and multi-line strings)
 
 ## CLI
 
