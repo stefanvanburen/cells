@@ -1,6 +1,8 @@
 package lsp_test
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"go.lsp.dev/jsonrpc2"
@@ -324,5 +326,28 @@ func TestRename(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// A loop variable's scope is the macro that binds it, which spans no source of
+// its own after expansion; prepareRename still answers with the occurrence
+// under the cursor.
+func TestPrepareRenameLoopVariable(t *testing.T) {
+	t.Parallel()
+
+	path := filepath.Join(t.TempDir(), "test.cel")
+	ok.MustNoError(t, os.WriteFile(path, []byte("[1].all(n, n > 0)"), 0o600))
+	conn, uri := setupLSPServer(t, path)
+	for _, character := range []uint32{8, 11} {
+		var result *protocol.Range
+		_, err := conn.Call(t.Context(), "textDocument/prepareRename", protocol.PrepareRenameParams{
+			TextDocument: protocol.TextDocumentIdentifier{URI: uri},
+			Position:     protocol.Position{Character: character},
+		}, &result)
+		ok.MustNoError(t, err)
+		ok.Equal(t, result != nil && *result == protocol.Range{
+			Start: protocol.Position{Character: character},
+			End:   protocol.Position{Character: character + 1},
+		}, true, ok.Sprintf("prepareRename at %d: %v", character, result))
 	}
 }

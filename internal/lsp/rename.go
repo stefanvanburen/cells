@@ -81,18 +81,21 @@ func computeRename(f *file, celEnv *cel.Env, params protocol.RenameParams) (*pro
 }
 
 func computePrepareRename(f *file, celEnv *cel.Env, pos protocol.Position) (protocol.PrepareRenameResult, error) {
-	nativeAST, info := f.identifierAt(celEnv, pos)
+	info, ranges := f.identifierOccurrencesAt(celEnv, pos)
 	// Functions are declared by the CEL environment, not by this file, so
 	// there is nothing here to rename.
 	if info == nil || info.kind == identifierKindFunction {
 		return nil, nil
 	}
 
-	r, ok := rangeOfExpr(f.content, nativeAST.SourceInfo(), info.exprID)
-	if !ok {
-		return nil, nil
+	// The occurrence under the cursor, out of those a rename would edit. A
+	// loop variable's info names its macro, which spans no source of its own.
+	for _, r := range ranges {
+		if r.Start.Line == pos.Line && r.Start.Character <= pos.Character && pos.Character <= r.End.Character {
+			return &r, nil
+		}
 	}
-	return &r, nil
+	return nil, nil
 }
 
 type identifierInfo struct {
