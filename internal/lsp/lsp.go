@@ -332,6 +332,7 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 			ReferencesProvider:        protocol.Boolean(true),
 			DocumentHighlightProvider: protocol.Boolean(true),
 			InlayHintProvider:         protocol.Boolean(true),
+			SelectionRangeProvider:    protocol.Boolean(true),
 		},
 		ServerInfo: protocol.ServerInfo{
 			Name:    serverName,

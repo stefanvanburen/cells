@@ -21,6 +21,7 @@ $ go install go.vanburen.xyz/cells/cmd/cells@latest
 * Signature help
 * Variable renaming
 * Inlay hints (expression evaluation)
+* Selection ranges (expand and shrink selection by expression)
 
 ## CLI
 
