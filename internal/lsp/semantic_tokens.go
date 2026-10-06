@@ -10,6 +10,7 @@ import (
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common/ast"
+	"cel.dev/cel-go/common/containers"
 	"cel.dev/cel-go/common/operators"
 	"cel.dev/cel-go/common/overloads"
 	"cel.dev/cel-go/common/stdlib"
@@ -154,14 +155,9 @@ func computeSemanticTokens(f *file, celEnv *cel.Env) *protocol.SemanticTokens {
 		c.at[t.runeStart] = i
 	}
 
-	// Checking rewrites the parsed AST in place, folding a qualified name like
-	// google.protobuf.Timestamp into one identifier, so check before walking
-	// whether or not the result is used: the walk then sees the same tree
-	// regardless of which request got to the file first.
-	_, _ = f.check(celEnv)
 	if nativeAST := f.ast(celEnv); nativeAST != nil {
 		c.sourceInfo = nativeAST.SourceInfo()
-		c.provider = celEnv.CELTypeProvider()
+		c.env = celEnv
 		c.walk(nativeAST.Expr(), nil)
 		c.walkMacroCalls()
 	}
@@ -187,7 +183,7 @@ type tokenClassifier struct {
 	ternaries, indexes map[int]bool
 
 	sourceInfo *ast.SourceInfo
-	provider   types.Provider
+	env        *cel.Env
 }
 
 // anchor returns the index of the token at the recorded position of the
@@ -279,18 +275,23 @@ func (c *tokenClassifier) walk(expr ast.Expr, scope map[string]bool) {
 	}
 	switch expr.Kind() {
 	case ast.IdentKind:
-		name := expr.AsIdent()
-		i := c.anchor(expr.ID())
-		// An identifier the checker folded from a selection is recorded at the
-		// selection's last dot.
-		if c.kind(i) == gen.CELLexerDOT {
-			i = c.step(i, 1)
-		}
-		semType, semMod := c.identClass(name, scope)
-		c.setQualified(i, name, semType, semMod)
+		semType, semMod := c.identClass(expr.AsIdent(), scope)
+		c.set(c.anchor(expr.ID()), semType, semMod)
 
 	case ast.SelectKind:
-		c.walk(expr.AsSelect().Operand(), scope)
+		sel := expr.AsSelect()
+		// Like the checker, prefer the longest qualified name the environment
+		// knows, such as google.protobuf.NullValue.NULL_VALUE, over selecting
+		// fields from its prefix.
+		if name, ok := c.qualifiedName(expr, scope); ok && !sel.IsTestOnly() {
+			if semType, semMod, ok := c.resolve(name); ok {
+				if dot := c.anchor(expr.ID()); c.kind(dot) == gen.CELLexerDOT {
+					c.setQualified(c.step(dot, 1), name, semType, semMod)
+				}
+				return
+			}
+		}
+		c.walk(sel.Operand(), scope)
 		// A selection is recorded at its dot, except for the presence test
 		// has() expands to, which is recorded at the macro and classified
 		// through the call has() was written as.
@@ -302,6 +303,16 @@ func (c *tokenClassifier) walk(expr ast.Expr, scope map[string]bool) {
 		call := expr.AsCall()
 		fn := call.FunctionName()
 		if call.IsMemberFunction() {
+			// math.greatest(a, b) parses as a method of math, but names a
+			// function in the math namespace.
+			if namespace, ok := c.qualifiedName(call.Target(), scope); ok && c.env.HasFunction(namespace+"."+fn) {
+				semType, semMod := functionClass(namespace+"."+fn, false)
+				c.setCallName(expr.ID(), namespace+"."+fn, semType, semMod)
+				for _, arg := range call.Args() {
+					c.walk(arg, scope)
+				}
+				return
+			}
 			c.walk(call.Target(), scope)
 		}
 		switch fn {
@@ -409,20 +420,39 @@ func (c *tokenClassifier) walkMacroCalls() {
 // identClass returns the class of an identifier, which is a variable unless
 // the environment knows the name as a type or an enum value.
 func (c *tokenClassifier) identClass(name string, scope map[string]bool) (semType, semMod uint32) {
-	if scope[name] {
-		return semanticTypeVariable, 0
+	if !scope[name] {
+		if semType, semMod, ok := c.resolve(name); ok {
+			return semType, semMod
+		}
 	}
-	value, found := c.provider.FindIdent(strings.TrimPrefix(name, "."))
+	return semanticTypeVariable, 0
+}
+
+// resolve returns the class of a possibly qualified name the environment knows
+// as a type or an enum value, and whether it knows the name at all.
+func (c *tokenClassifier) resolve(name string) (semType, semMod uint32, ok bool) {
+	value, found := c.env.CELTypeProvider().FindIdent(strings.TrimPrefix(name, "."))
 	switch {
 	case !found:
-		return semanticTypeVariable, 0
+		return 0, 0, false
 	case standardNames().types[name]:
-		return semanticTypeType, semanticModifierDefaultLibrary
+		return semanticTypeType, semanticModifierDefaultLibrary, true
 	}
 	if _, isType := value.(*types.Type); isType {
-		return semanticTypeType, 0
+		return semanticTypeType, 0, true
 	}
-	return semanticTypeEnumMember, 0
+	return semanticTypeEnumMember, 0, true
+}
+
+// qualifiedName returns the dotted name expr spells, if it is a chain of field
+// selections from an identifier that is not a loop variable.
+func (c *tokenClassifier) qualifiedName(expr ast.Expr, scope map[string]bool) (string, bool) {
+	name, ok := containers.ToQualifiedName(expr)
+	if !ok {
+		return "", false
+	}
+	root, _, _ := strings.Cut(strings.TrimPrefix(name, "."), ".")
+	return name, !scope[root]
 }
 
 // functionClass returns the class of the name of a call to fn.

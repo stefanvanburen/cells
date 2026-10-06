@@ -100,6 +100,16 @@ func TestDocumentHighlight(t *testing.T) {
 			expectedRanges: []protocol.Range{},
 			description:    "Empty file returns no highlights",
 		},
+
+		// Opening the file type-checks it for diagnostics, and the AST
+		// highlights walk keeps the selections the source spells.
+		{
+			name:           "dot_in_qualified_name",
+			file:           "testdata/document_highlight/qualified_name.cel",
+			position:       protocol.Position{Line: 0, Character: 25},
+			expectedRanges: []protocol.Range{},
+			description:    "The dot before NULL_VALUE in google.protobuf.NullValue.NULL_VALUE is not an identifier",
+		},
 	}
 
 	for _, tc := range testCases {

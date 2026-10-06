@@ -57,7 +57,13 @@ func (f *file) check(celEnv *cel.Env) (*cel.Ast, *cel.Issues) {
 		f.checkedEnv = celEnv
 		f.checked, f.checkIssues = nil, nil
 		if parsed, _ := f.parse(celEnv); parsed != nil {
-			checked, issues := celEnv.Check(parsed)
+			// Checking rewrites the AST it is given in place, folding a
+			// qualified name like google.protobuf.Duration into one
+			// identifier. Check a parse of its own, so that the AST every
+			// feature walks keeps the shape the source was written in;
+			// parsing is deterministic, so the IDs of the two agree.
+			fresh, _ := celEnv.Parse(f.content)
+			checked, issues := celEnv.Check(fresh)
 			f.checkIssues = issues
 			if issues.Err() == nil {
 				f.checked = checked
