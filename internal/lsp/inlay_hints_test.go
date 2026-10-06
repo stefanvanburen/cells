@@ -1,9 +1,14 @@
 package lsp_test
 
 import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"go.lsp.dev/protocol"
+	"go.vanburen.xyz/cells/internal/lsp"
 	"go.vanburen.xyz/ok"
 )
 
@@ -93,6 +98,47 @@ func TestInlayHints(t *testing.T) {
 			} else {
 				ok.True(t, len(hints) == 0)
 			}
+		})
+	}
+}
+
+func TestInlayHintsLoopVariableTypes(t *testing.T) {
+	t.Parallel()
+
+	// want lists each type hint as the 1-indexed line and UTF-16 column it
+	// follows, then its label.
+	tests := []struct {
+		name string
+		src  string
+		want []string
+	}{
+		{"list", "[1, 2].all(x, x > 0)", []string{"1:13 : int"}},
+		{"map", `{"a": 1}.exists(k, k == "a")`, []string{"1:18 : string"}},
+		{"two_variable_map", `{"a": 1}.all(k, v, v > 0)`, []string{"1:15 : string", "1:18 : int"}},
+		{"two_variable_list", `["a"].exists(i, v, i == 0 && v == "a")`, []string{"1:15 : int", "1:18 : string"}},
+		{"bind", `cel.bind(n, "x", n + n) == "xx"`, []string{"1:11 : string"}},
+		{"dyn", "request.headers.all(h, h != '')", []string{"1:22 : dyn"}},
+		{"nested", "[[1]].all(xs, xs.all(x, x > 0))", []string{"1:13 : list(int)", "1:23 : int"}},
+		{"multiline", "[1].map(\n  x,\n  x * 2\n)", []string{"2:4 : int"}},
+		{"does_not_check", "[1].all(x, x > undeclared)", nil},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			config := "name: test\nvariables:\n  - name: request\n    type: \"map<string, dyn>\"\nextensions:\n  - name: bindings\n  - name: comprehensions\n"
+			ok.MustNoError(t, os.WriteFile(filepath.Join(dir, lsp.ConfigFileName), []byte(config), 0o600))
+			path := filepath.Join(dir, "test.cel")
+			ok.MustNoError(t, os.WriteFile(path, []byte(tt.src), 0o600))
+
+			var got []string
+			for _, hint := range getInlayHints(t, path) {
+				label := hint.Label.(protocol.InlayHintLabelPartSlice)[0].Value
+				if strings.HasPrefix(label, ": ") {
+					got = append(got, fmt.Sprintf("%d:%d %s", hint.Position.Line+1, hint.Position.Character+1, label))
+				}
+			}
+			ok.DeepEqual(t, got, tt.want)
 		})
 	}
 }

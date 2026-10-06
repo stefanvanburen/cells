@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"cel.dev/cel-go/cel"
+	celast "cel.dev/cel-go/common/ast"
 	"cel.dev/cel-go/common/types"
 	"cel.dev/cel-go/common/types/ref"
 	"go.lsp.dev/protocol"
@@ -34,24 +35,24 @@ func (s *server) InlayHint(ctx context.Context, params *protocol.InlayHintParams
 	return filtered, nil
 }
 
-// computeInlayHints returns inlay hints for CEL expressions.
-// Currently shows evaluation results for valid expressions.
+// computeInlayHints returns the types of the loop variables a macro declares,
+// and the value of the whole expression when it evaluates without any input.
+// Both need the expression to type-check.
 func computeInlayHints(f *file, celEnv *cel.Env) ([]protocol.InlayHint, error) {
 	if f.content == "" {
 		return []protocol.InlayHint{}, nil
 	}
 
-	// A hint only makes sense for an expression that type-checks, since the
-	// hint is its evaluated value.
 	checked, _ := f.check(celEnv)
 	if checked == nil {
 		return []protocol.InlayHint{}, nil
 	}
+	hints := loopVariableHints(f.content, checked.NativeRep())
 
 	// Try to evaluate the entire expression
 	result, err := tryEvaluateExpression(f.content, celEnv)
 	if err != nil {
-		return []protocol.InlayHint{}, nil
+		return hints, nil
 	}
 
 	// Get the type of the expression
@@ -73,7 +74,78 @@ func computeInlayHints(f *file, celEnv *cel.Env) ([]protocol.InlayHint, error) {
 		PaddingLeft: &paddingLeft,
 	}
 
-	return []protocol.InlayHint{hint}, nil
+	return append(hints, hint), nil
+}
+
+// loopVariableHints returns a hint for the type of each loop variable a macro
+// declares, placed after the declaration: the k and v of .all(k, v, ...).
+func loopVariableHints(content string, checked *celast.AST) []protocol.InlayHint {
+	hints := []protocol.InlayHint{}
+	sourceInfo := checked.SourceInfo()
+	celast.PreOrderVisit(checked.Expr(), celast.NewExprVisitor(func(e celast.Expr) {
+		if e.Kind() != celast.ComprehensionKind {
+			return
+		}
+		call, ok := sourceInfo.GetMacroCall(e.ID())
+		if !ok || call.Kind() != celast.CallKind {
+			return
+		}
+		comp := e.AsComprehension()
+		for _, arg := range call.AsCall().Args() {
+			if arg.Kind() != celast.IdentKind {
+				continue
+			}
+			t := loopVariableType(comp, arg.AsIdent(), checked.TypeMap())
+			_, end, ok := exprByteRange(content, sourceInfo, arg.ID())
+			if t == nil || !ok {
+				continue
+			}
+			line, col := byteOffsetToLineCol(content, end)
+			hints = append(hints, protocol.InlayHint{
+				Position: protocol.Position{Line: line, Character: col},
+				Label:    protocol.InlayHintLabelPartSlice{{Value: ": " + t.String()}},
+				Kind:     protocol.InlayHintKind(1), // Type hint kind
+			})
+		}
+	}))
+	return hints
+}
+
+// loopVariableType returns the type of the variable name that comp binds, or
+// nil if comp does not bind it. Expansion leaves no expression for the
+// variable itself, so its type follows from what the comprehension iterates
+// over: the elements of a list, or the keys of a map, and with a second
+// variable a list's indexes and elements, or a map's keys and values. A
+// variable bound through the accumulator, as cel.bind does, has the type of
+// its initial value.
+func loopVariableType(comp celast.ComprehensionExpr, name string, typeMap map[int64]*types.Type) *types.Type {
+	if name == comp.AccuVar() {
+		return typeMap[comp.AccuInit().ID()]
+	}
+	rangeType := typeMap[comp.IterRange().ID()]
+	if rangeType == nil {
+		return nil
+	}
+	param := func(i int) *types.Type {
+		if params := rangeType.Parameters(); i < len(params) {
+			return params[i]
+		}
+		return types.DynType
+	}
+	list := rangeType.Kind() == types.ListKind
+	switch name {
+	case comp.IterVar():
+		if list && comp.HasIterVar2() {
+			return types.IntType
+		}
+		return param(0)
+	case comp.IterVar2():
+		if list {
+			return param(0)
+		}
+		return param(1)
+	}
+	return nil
 }
 
 // tryEvaluateExpression attempts to parse, check, and evaluate a CEL expression.

@@ -20,7 +20,7 @@ $ go install go.vanburen.xyz/cells/cmd/cells@latest
 * Completion (including declared variables and message fields)
 * Signature help
 * Variable renaming
-* Inlay hints (expression evaluation)
+* Inlay hints (expression evaluation and loop variable types)
 * Selection ranges (expand and shrink selection by expression)
 * Folding ranges (brackets spanning lines, comment blocks and multi-line strings)
 
