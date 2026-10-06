@@ -16,7 +16,6 @@ import (
 	"cel.dev/cel-go/common/stdlib"
 	"cel.dev/cel-go/common/types"
 	"cel.dev/cel-go/parser/gen"
-	"github.com/antlr4-go/antlr/v4"
 	"go.lsp.dev/protocol"
 )
 
@@ -93,44 +92,6 @@ type semanticClass struct {
 	semType, semMod uint32
 }
 
-// celToken is a token as cel-go's lexer produces it, with the byte range of its
-// text and the rune offset the parser's source positions are measured in.
-type celToken struct {
-	kind       int
-	start, end int
-	runeStart  int32
-}
-
-// lexCEL returns the tokens of content, comments included and whitespace left
-// out. Lexing does not need content to parse.
-func lexCEL(content string) []celToken {
-	// ANTLR measures positions in runes; record the byte offset of each.
-	runeBytes := make([]int, 0, len(content)+1)
-	for i := range content {
-		runeBytes = append(runeBytes, i)
-	}
-	runeBytes = append(runeBytes, len(content))
-
-	lexer := gen.NewCELLexer(antlr.NewInputStream(content))
-	lexer.RemoveErrorListeners()
-	var tokens []celToken
-	for {
-		t := lexer.NextToken()
-		if t.GetTokenType() == antlr.TokenEOF {
-			return tokens
-		}
-		if t.GetTokenType() == gen.CELLexerWHITESPACE {
-			continue
-		}
-		tokens = append(tokens, celToken{
-			kind:      t.GetTokenType(),
-			start:     runeBytes[t.GetStart()],
-			end:       runeBytes[t.GetStop()+1],
-			runeStart: int32(t.GetStart()),
-		})
-	}
-}
-
 // computeSemanticTokens returns the semantic tokens of f.
 //
 // The lexer decides where every token is and the classes that need no
@@ -143,21 +104,19 @@ func computeSemanticTokens(f *file, celEnv *cel.Env) *protocol.SemanticTokens {
 	if f == nil || f.content == "" {
 		return nil
 	}
+	nativeAST := f.ast(celEnv)
+	var sourceInfo *ast.SourceInfo
+	if nativeAST != nil {
+		sourceInfo = nativeAST.SourceInfo()
+	}
 	c := &tokenClassifier{
-		content:   f.content,
-		tokens:    lexCEL(f.content),
-		at:        make(map[int32]int),
-		classes:   make(map[int]semanticClass),
-		ternaries: make(map[int]bool),
-		indexes:   make(map[int]bool),
+		sourceTokens: newSourceTokens(f.content, sourceInfo),
+		env:          celEnv,
+		classes:      make(map[int]semanticClass),
+		ternaries:    make(map[int]bool),
+		indexes:      make(map[int]bool),
 	}
-	for i, t := range c.tokens {
-		c.at[t.runeStart] = i
-	}
-
-	if nativeAST := f.ast(celEnv); nativeAST != nil {
-		c.sourceInfo = nativeAST.SourceInfo()
-		c.env = celEnv
+	if nativeAST != nil {
 		c.walk(nativeAST.Expr(), nil)
 		c.walkMacroCalls()
 	}
@@ -171,61 +130,14 @@ func computeSemanticTokens(f *file, celEnv *cel.Env) *protocol.SemanticTokens {
 
 // tokenClassifier assigns semantic classes to the tokens of one file.
 type tokenClassifier struct {
-	content string
-	tokens  []celToken
-	// at maps a rune offset to the token starting there.
-	at map[int32]int
+	*sourceTokens
+	env *cel.Env
 
 	// classes holds the class of each identifier token, by token index.
 	classes map[int]semanticClass
 	// ternaries and indexes hold the ? and [ tokens that are operators rather
 	// than optional-syntax markers and list brackets.
 	ternaries, indexes map[int]bool
-
-	sourceInfo *ast.SourceInfo
-	env        *cel.Env
-}
-
-// anchor returns the index of the token at the recorded position of the
-// expression with the given ID, or -1.
-func (c *tokenClassifier) anchor(id int64) int {
-	r, ok := c.sourceInfo.GetOffsetRange(id)
-	if !ok {
-		return -1
-	}
-	if i, ok := c.at[r.Start]; ok {
-		return i
-	}
-	return -1
-}
-
-// kind returns the kind of the token at index i, or 0 if there is none.
-func (c *tokenClassifier) kind(i int) int {
-	if i < 0 || i >= len(c.tokens) {
-		return 0
-	}
-	return c.tokens[i].kind
-}
-
-// step returns the index of the nearest token in direction dir (1 or -1) from
-// i that is not a comment, or -1.
-func (c *tokenClassifier) step(i, dir int) int {
-	for i += dir; i >= 0 && i < len(c.tokens); i += dir {
-		if c.tokens[i].kind != gen.CELLexerCOMMENT {
-			return i
-		}
-	}
-	return -1
-}
-
-// text returns the source text of the token at index i.
-func (c *tokenClassifier) text(i int) string {
-	return c.content[c.tokens[i].start:c.tokens[i].end]
-}
-
-func (c *tokenClassifier) isName(i int) bool {
-	k := c.kind(i)
-	return k == gen.CELLexerIDENTIFIER || k == gen.CELLexerESC_IDENTIFIER
 }
 
 // set records the class of the name token at i, unless it already has one.
