@@ -49,8 +49,7 @@ func computeInlayHints(f *file, celEnv *cel.Env) ([]protocol.InlayHint, error) {
 	}
 	hints := loopVariableHints(f.content, checked.NativeRep())
 
-	// Try to evaluate the entire expression
-	result, err := tryEvaluateExpression(f.content, celEnv)
+	result, err := evaluate(celEnv, checked)
 	if err != nil {
 		return hints, nil
 	}
@@ -148,38 +147,22 @@ func loopVariableType(comp celast.ComprehensionExpr, name string, typeMap map[in
 	return nil
 }
 
-// tryEvaluateExpression attempts to parse, check, and evaluate a CEL expression.
-// Returns a human-readable string representation of the result, or an error.
-func tryEvaluateExpression(exprText string, celEnv *cel.Env) (string, error) {
-	if strings.TrimSpace(exprText) == "" {
-		return "", fmt.Errorf("empty expression")
-	}
+// evalCostLimit bounds the runtime cost of evaluating an expression for its
+// hint. Requests are handled one at a time, so an expression that iterates
+// over large or nested lists would otherwise hold up every request behind it.
+const evalCostLimit = 1_000_000
 
-	// Parse the expression
-	parsed, parseIssues := celEnv.Parse(exprText)
-	if parseIssues.Err() != nil {
-		return "", parseIssues.Err()
+// evaluate evaluates a checked expression without any input, within
+// [evalCostLimit], and formats the result.
+func evaluate(celEnv *cel.Env, checked *cel.Ast) (string, error) {
+	prog, err := celEnv.Program(checked, cel.CostLimit(evalCostLimit))
+	if err != nil {
+		return "", err
 	}
-
-	// Type-check the expression
-	_, checkIssues := celEnv.Check(parsed)
-	if checkIssues.Err() != nil {
-		return "", checkIssues.Err()
+	val, _, err := prog.Eval(cel.NoVars())
+	if err != nil {
+		return "", err
 	}
-
-	// Compile the expression
-	prog, compileErr := celEnv.Program(parsed)
-	if compileErr != nil {
-		return "", compileErr
-	}
-
-	// Evaluate with no variables
-	val, _, evalErr := prog.Eval(map[string]any{})
-	if evalErr != nil {
-		return "", evalErr
-	}
-
-	// Convert the result to a human-readable string
 	return resultToString(val), nil
 }
 

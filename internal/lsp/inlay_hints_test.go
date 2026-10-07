@@ -142,3 +142,22 @@ func TestInlayHintsLoopVariableTypes(t *testing.T) {
 		})
 	}
 }
+
+func TestInlayHintsCostLimit(t *testing.T) {
+	t.Parallel()
+
+	// Four nested comprehensions over 100 elements take 10^8 iterations,
+	// far beyond the cost an inlay hint may spend evaluating.
+	list := "[" + strings.Repeat("0, ", 99) + "0]"
+	src := list + ".all(a, " + list + ".all(b, " + list + ".all(c, " + list + ".all(d, a + b + c + d == 0))))"
+	path := filepath.Join(t.TempDir(), "test.cel")
+	ok.MustNoError(t, os.WriteFile(path, []byte(src), 0o600))
+
+	var results []string
+	for _, hint := range getInlayHints(t, path) {
+		if label := hint.Label.(protocol.InlayHintLabelPartSlice)[0].Value; strings.HasPrefix(label, "→") {
+			results = append(results, label)
+		}
+	}
+	ok.DeepEqual(t, results, nil)
+}
