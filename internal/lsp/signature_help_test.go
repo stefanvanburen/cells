@@ -1,6 +1,9 @@
 package lsp_test
 
 import (
+	"os"
+	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -129,6 +132,69 @@ func TestSignatureHelp(t *testing.T) {
 				got, _ := sig.ActiveParameter.Get()
 				ok.Equal(t, got, *tc.wantActiveParam)
 			}
+		})
+	}
+}
+
+// TestSignatureHelpWhileTyping asks for signature help at the | in each source,
+// where a call is still being written and the source may not parse.
+func TestSignatureHelpWhileTyping(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name      string
+		src       string
+		wantLabel string // empty for no signature help
+		wantArg   uint32
+	}{
+		{"open_paren", "size(|", "size(", 0},
+		{"after_comma", `"a".startsWith("b", |`, ".startsWith(", 1},
+		{"auto_paired", `size("a", |)`, "size(", 1},
+		{"member_call", `"a".startsWith(|`, ".startsWith(", 0},
+		{"generic_receiver", "{1: 2}.size(|", "map(<A>, <B>).size(", 0},
+		{"inside_list", "size([1, 2, |", "size(", 0},
+		{"inside_parens", "size((1 + |", "size(", 0},
+		{"nested", `size("a") + int(string(|`, "string(", 0},
+		{"after_comment", "size( // the input\n|", "size(", 0},
+		{"namespaced", "math.bitShiftLeft(1, |", "math.bitShiftLeft(", 1},
+		{"closed", `size("a")|`, "", 0},
+		{"macro", "[1].all(x, |", "", 0},
+		{"grouping_only", "(1 + |", "", 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			dir := t.TempDir()
+			config := "name: test\nextensions:\n  - name: math\n"
+			ok.MustNoError(t, os.WriteFile(filepath.Join(dir, lsp.ConfigFileName), []byte(config), 0o600))
+			before, after, _ := strings.Cut(tt.src, "|")
+			path := filepath.Join(dir, "test.cel")
+			ok.MustNoError(t, os.WriteFile(path, []byte(before+after), 0o600))
+			conn, uri := setupLSPServer(t, path)
+
+			lines := strings.Split(before, "\n")
+			cursor := protocol.Position{Line: uint32(len(lines) - 1), Character: uint32(len(lines[len(lines)-1]))}
+			sig := requestSignatureHelp(t, conn, uri, cursor)
+			if tt.wantLabel == "" {
+				ok.Zero(t, sig)
+				return
+			}
+			ok.NotNil(ok.Must(t), sig)
+			arg, _ := sig.ActiveParameter.Get()
+			ok.Equal(t, arg, tt.wantArg)
+
+			// Some overload has the wanted label, and every parameter is
+			// a type or a name with its parentheses balanced, never a piece of
+			// the signature around it.
+			var labels, params []string
+			for _, s := range sig.Signatures {
+				labels = append(labels, s.Label)
+				for _, p := range s.Parameters {
+					params = append(params, string(p.Label.(protocol.String)))
+				}
+			}
+			ok.True(t, slices.ContainsFunc(labels, func(l string) bool { return strings.Contains(l, tt.wantLabel) }))
+			ok.True(t, !slices.ContainsFunc(params, func(p string) bool { return strings.Count(p, "(") != strings.Count(p, ")") }))
 		})
 	}
 }

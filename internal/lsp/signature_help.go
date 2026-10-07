@@ -2,11 +2,12 @@ package lsp
 
 import (
 	"context"
+	"slices"
 	"strings"
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common"
-	"cel.dev/cel-go/common/ast"
+	"cel.dev/cel-go/parser/gen"
 	"go.lsp.dev/protocol"
 )
 
@@ -21,45 +22,42 @@ func (s *server) SignatureHelp(ctx context.Context, params *protocol.SignatureHe
 }
 
 func computeSignatureHelp(f *file, celEnv *cel.Env, pos protocol.Position) (*protocol.SignatureHelp, error) {
-	nativeAST := f.ast(celEnv)
-	if nativeAST == nil {
-		return nil, nil
-	}
-	sourceInfo := nativeAST.SourceInfo()
-
-	// Convert the LSP position (line, UTF-16 col) to a byte offset.
-	targetOffset := lineColToByteOffset(f.content, pos.Line, pos.Character)
-	if targetOffset < 0 || targetOffset >= len(f.content) {
+	// The cursor may sit at the very end of the content, after a call's
+	// opening parenthesis or a comma.
+	offset := lineColToByteOffset(f.content, pos.Line, pos.Character)
+	if offset < 0 || offset > len(f.content) {
 		return nil, nil
 	}
 
-	// Find the call expression that contains the cursor position.
-	call, paramIndex := findCallAtPosition(nativeAST.Expr(), sourceInfo, f.content, targetOffset)
-	if call == nil {
-		return nil, nil
-	}
-
-	funcName := call.FunctionName()
-
-	// Look up the function in the CEL environment.
-	funcs := celEnv.Functions()
-	funcDecl, ok := funcs[funcName]
+	call, ok := enclosingCall(f.content, offset)
 	if !ok {
-		// Unknown function - no signature help
 		return nil, nil
 	}
 
-	// Generate signatures from the function declaration, filtered by call type.
-	sigs := generateSignatures(funcDecl, call.IsMemberFunction())
+	// A call written with a dotted name is either a namespaced function, such
+	// as math.abs, or a member function called on the names before it.
+	funcs := celEnv.Functions()
+	name := strings.Join(call.names, ".")
+	funcDecl, ok := funcs[name]
+	member := false
+	if !ok || call.receiver {
+		name = call.names[len(call.names)-1]
+		funcDecl, ok = funcs[name]
+		member = call.receiver || len(call.names) > 1
+	}
+	if !ok {
+		return nil, nil
+	}
+
+	sigs := generateSignatures(funcDecl, name, member)
 	if len(sigs) == 0 {
 		return nil, nil
 	}
 
-	// Return the first signature as the active one, with the computed active parameter.
 	return &protocol.SignatureHelp{
 		Signatures:      sigs,
 		ActiveSignature: &firstSignature,
-		ActiveParameter: protocol.NewNullable(paramIndex),
+		ActiveParameter: protocol.NewNullable(call.arg),
 	}, nil
 }
 
@@ -67,143 +65,79 @@ func computeSignatureHelp(f *file, celEnv *cel.Env, pos protocol.Position) (*pro
 // requests to avoid allocating a *uint32 per call.
 var firstSignature uint32
 
-// findCallAtPosition walks the AST to find a call expression that contains the cursor,
-// and returns the call and the active parameter index (0-based).
-func findCallAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, exprString string, targetOffset int) (ast.CallExpr, uint32) {
-	var result ast.CallExpr
-	var paramIndex uint32
-	var bestByteRange [2]int
-
-	var walk func(ast.Expr)
-	walk = func(e ast.Expr) {
-		if e == nil {
-			return
-		}
-
-		if e.Kind() == ast.CallKind {
-			call := e.AsCall()
-			offsetRange, hasOffset := sourceInfo.GetOffsetRange(e.ID())
-
-			// For a call expression, we want to find the opening paren and everything after.
-			// The offsetRange might just be the function name part.
-			if hasOffset {
-				byteStart, _ := celOffsetRangeToByteRange(exprString, offsetRange)
-
-				// Find the opening paren from byteStart
-				parenIdx := strings.Index(exprString[byteStart:], "(")
-
-				if parenIdx >= 0 {
-					// Extend the range to include the whole call (from opening paren to closing paren)
-					parenStart := byteStart + parenIdx
-					parenEnd := parenStart + 1
-					depth := 1
-					for parenEnd < len(exprString) && depth > 0 {
-						if exprString[parenEnd] == '(' {
-							depth++
-						} else if exprString[parenEnd] == ')' {
-							depth--
-						}
-						parenEnd++
-					}
-
-					// Check if cursor is inside the parentheses
-					if targetOffset >= parenStart && targetOffset < parenEnd {
-						// Prefer more specific (smaller) ranges
-						callRange := parenEnd - parenStart
-						if result == nil || callRange < (bestByteRange[1]-bestByteRange[0]) {
-							result = call
-							paramIndex = countParametersBeforeCursor(exprString, parenStart, targetOffset, call)
-							bestByteRange = [2]int{parenStart, parenEnd}
-						}
-					}
-				}
-			}
-
-			// Walk arguments.
-			for _, arg := range call.Args() {
-				walk(arg)
-			}
-			if call.IsMemberFunction() {
-				walk(call.Target())
-			}
-		} else if e.Kind() == ast.ListKind {
-			for _, elem := range e.AsList().Elements() {
-				walk(elem)
-			}
-		} else if e.Kind() == ast.MapKind {
-			for _, entry := range e.AsMap().Entries() {
-				mapEntry := entry.AsMapEntry()
-				walk(mapEntry.Key())
-				walk(mapEntry.Value())
-			}
-		} else if e.Kind() == ast.StructKind {
-			for _, field := range e.AsStruct().Fields() {
-				walk(field.AsStructField().Value())
-			}
-		} else if e.Kind() == ast.SelectKind {
-			sel := e.AsSelect()
-			if sel.Operand() != nil {
-				walk(sel.Operand())
-			}
-		} else if e.Kind() == ast.ComprehensionKind {
-			comp := e.AsComprehension()
-			walk(comp.IterRange())
-			walk(comp.AccuInit())
-			walk(comp.LoopCondition())
-			walk(comp.LoopStep())
-			walk(comp.Result())
-		}
-	}
-
-	walk(expr)
-	return result, paramIndex
+// callSite is a call whose argument list is open at the cursor.
+type callSite struct {
+	// names is the dotted name the call is written with, such as
+	// ["math", "abs"] or ["s", "startsWith"].
+	names []string
+	// receiver reports whether the names follow a dot, as in
+	// "a".startsWith(, making the call a member call on what precedes it.
+	receiver bool
+	// arg is the index of the argument the cursor is in.
+	arg uint32
 }
 
-// countParametersBeforeCursor determines which parameter the cursor is on,
-// by counting commas before the cursor within the argument list.
-func countParametersBeforeCursor(exprString string, callByteStart, cursorOffset int, call ast.CallExpr) uint32 {
-	// Find the opening paren.
-	openParenIdx := strings.Index(exprString[callByteStart:], "(")
-	if openParenIdx == -1 {
-		return 0
+// enclosingCall finds the innermost call whose argument list is open at
+// offset. It reads the tokens rather than the AST, so that it finds a call
+// still being typed: one with no closing parenthesis, or an argument yet to
+// be written after a comma.
+func enclosingCall(content string, offset int) (callSite, bool) {
+	t := &sourceTokens{content: content, tokens: lexCEL(content)}
+
+	// open holds each bracket open at offset, with the commas directly
+	// inside it so far.
+	type bracket struct {
+		index  int
+		commas uint32
 	}
-	openParenIdx += callByteStart
-
-	// Count commas and parenthesis depth from opening paren to cursor.
-	paramIndex := uint32(0)
-	depth := 0
-
-	for i := openParenIdx + 1; i < len(exprString) && i < cursorOffset; i++ {
-		switch exprString[i] {
-		case '(':
-			depth++
-		case ')':
-			depth--
-		case ',':
-			if depth == 0 {
-				paramIndex++
+	var open []bracket
+	for i, tok := range t.tokens {
+		if tok.start >= offset {
+			break
+		}
+		switch tok.kind {
+		case gen.CELLexerLPAREN, gen.CELLexerLBRACKET, gen.CELLexerLBRACE:
+			open = append(open, bracket{index: i})
+		case gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
+			if len(open) > 0 {
+				open = open[:len(open)-1]
+			}
+		case gen.CELLexerCOMMA:
+			if len(open) > 0 {
+				open[len(open)-1].commas++
 			}
 		}
 	}
 
-	// If the call has no arguments, return 0.
-	if len(call.Args()) == 0 && paramIndex > 0 {
-		return 0
+	// Skip the lists, maps and parenthesized expressions the cursor is in, up
+	// to the parenthesis that follows a function's name.
+	for _, b := range slices.Backward(open) {
+		if t.kind(b.index) != gen.CELLexerLPAREN {
+			continue
+		}
+		i := t.step(b.index, -1)
+		if !t.isName(i) {
+			continue
+		}
+		names := []string{t.text(i)}
+		for dot := t.step(i, -1); t.kind(dot) == gen.CELLexerDOT; dot = t.step(i, -1) {
+			prev := t.step(dot, -1)
+			if !t.isName(prev) {
+				return callSite{names: names, receiver: true, arg: b.commas}, true
+			}
+			names = append([]string{t.text(prev)}, names...)
+			i = prev
+		}
+		return callSite{names: names, arg: b.commas}, true
 	}
-
-	// Don't exceed the actual number of parameters.
-	if int(paramIndex) >= len(call.Args()) {
-		return uint32(len(call.Args()) - 1)
-	}
-
-	return paramIndex
+	return callSite{}, false
 }
 
 // generateSignatures creates protocol.SignatureInformation for overloads of a function.
 // funcDecl must implement the interface with Documentation() method.
-// If isMemberFunction is true, only member function overloads are included;
-// if false, only global function overloads are included.
-func generateSignatures(funcDecl any, isMemberFunction bool) []protocol.SignatureInformation {
+// If isMemberFunction is true, only member function overloads of name are
+// included; if false, only global function overloads are included.
+func generateSignatures(funcDecl any, name string, isMemberFunction bool) []protocol.SignatureInformation {
 	// Try to get documentation if available.
 	var doc *common.Doc
 	if documenter, ok := funcDecl.(interface{ Documentation() *common.Doc }); ok {
@@ -220,10 +154,10 @@ func generateSignatures(funcDecl any, isMemberFunction bool) []protocol.Signatur
 	// If the main doc has a signature, use it as the primary signature.
 	// Check if it matches the expected call type.
 	if doc.Signature != "" {
-		if isSignatureMatchingCallType(doc.Signature, isMemberFunction) {
+		if isSignatureMatchingCallType(doc.Signature, name, isMemberFunction) {
 			sig := protocol.SignatureInformation{
 				Label:      doc.Signature,
-				Parameters: extractParametersFromSignature(doc.Signature, doc),
+				Parameters: extractParametersFromSignature(doc.Signature, name),
 			}
 			if doc.Description != "" {
 				sig.Documentation = protocol.String(doc.Description)
@@ -235,10 +169,10 @@ func generateSignatures(funcDecl any, isMemberFunction bool) []protocol.Signatur
 	// Use child signatures as overloads, filtering by call type.
 	var sigs []protocol.SignatureInformation
 	for _, child := range doc.Children {
-		if child.Signature != "" && isSignatureMatchingCallType(child.Signature, isMemberFunction) {
+		if child.Signature != "" && isSignatureMatchingCallType(child.Signature, name, isMemberFunction) {
 			sig := protocol.SignatureInformation{
 				Label:      child.Signature,
-				Parameters: extractParametersFromSignature(child.Signature, child),
+				Parameters: extractParametersFromSignature(child.Signature, name),
 			}
 			if child.Description != "" {
 				sig.Documentation = protocol.String(child.Description)
@@ -257,36 +191,33 @@ func generateSignatures(funcDecl any, isMemberFunction bool) []protocol.Signatur
 	}}
 }
 
-// isSignatureMatchingCallType checks if a signature matches the call type.
-// Member function signatures typically have a receiver (e.g., "string.matches(string) -> bool").
-// Global function signatures don't (e.g., "matches(string, string) -> bool").
-func isSignatureMatchingCallType(signature string, isMemberFunction bool) bool {
-	// A simple heuristic: member functions have a dot before the opening paren.
-	// E.g., "string.matches(string) -> bool" contains a dot.
-	before, _, ok := strings.Cut(signature, "(")
-	if !ok {
-		return true // Can't determine, so include it
+// isSignatureMatchingCallType reports whether a signature of the function
+// name is for the given kind of call. A member signature names the receiver's
+// type before the function, as in "string.matches(string) -> bool", and a
+// global one starts with the name, as in "matches(string, string) -> bool" or
+// "math.abs(int) -> int".
+func isSignatureMatchingCallType(signature, name string, isMemberFunction bool) bool {
+	if isMemberFunction {
+		return strings.Contains(signature, "."+name+"(")
 	}
-
-	beforeParen := before
-	hasDot := strings.Contains(beforeParen, ".")
-
-	// If it's a member call, we want signatures with dots.
-	// If it's a global call, we want signatures without dots.
-	return hasDot == isMemberFunction
+	return strings.HasPrefix(signature, name+"(")
 }
 
-// extractParametersFromSignature parses parameter information from a signature string.
-// For now, this is a simple implementation that extracts parameter names from the signature.
-func extractParametersFromSignature(signature string, doc *common.Doc) []protocol.ParameterInformation {
-	// Simple extraction: assume signature is like "func(param1, param2) -> type"
-	openIdx := strings.Index(signature, "(")
-	closeIdx := strings.LastIndex(signature, ")")
-	if openIdx == -1 || closeIdx == -1 || openIdx >= closeIdx {
+// extractParametersFromSignature parses the parameters from a signature of the
+// function name, such as "list(<A>).join(string) -> string": those in the
+// parentheses after the name, before the result type.
+func extractParametersFromSignature(signature, name string) []protocol.ParameterInformation {
+	_, rest, ok := strings.Cut(signature, name+"(")
+	if !ok {
+		return nil
+	}
+	rest, _, _ = strings.Cut(rest, " -> ")
+	closeIdx := strings.LastIndex(rest, ")")
+	if closeIdx == -1 {
 		return nil
 	}
 
-	paramsStr := signature[openIdx+1 : closeIdx]
+	paramsStr := rest[:closeIdx]
 	if paramsStr == "" {
 		return nil
 	}
@@ -308,9 +239,8 @@ func extractParametersFromSignature(signature string, doc *common.Doc) []protoco
 			if depth == 0 {
 				paramStr := strings.TrimSpace(current.String())
 				if paramStr != "" {
-					paramName := extractParamName(paramStr)
 					params = append(params, protocol.ParameterInformation{
-						Label: protocol.String(paramName),
+						Label: protocol.String(paramStr),
 					})
 				}
 				current.Reset()
@@ -325,21 +255,10 @@ func extractParametersFromSignature(signature string, doc *common.Doc) []protoco
 	// Add the last parameter.
 	paramStr := strings.TrimSpace(current.String())
 	if paramStr != "" {
-		paramName := extractParamName(paramStr)
 		params = append(params, protocol.ParameterInformation{
-			Label: protocol.String(paramName),
+			Label: protocol.String(paramStr),
 		})
 	}
 
 	return params
-}
-
-// extractParamName extracts just the parameter name from a parameter declaration like "string x" or "string".
-func extractParamName(paramDecl string) string {
-	// For now, return the last word (the parameter name, if present).
-	parts := strings.Fields(paramDecl)
-	if len(parts) > 0 {
-		return parts[len(parts)-1]
-	}
-	return paramDecl
 }
