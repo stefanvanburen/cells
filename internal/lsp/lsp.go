@@ -11,6 +11,7 @@ import (
 	"io"
 	"maps"
 	"os"
+	"runtime/debug"
 	"slices"
 	"sync"
 	"sync/atomic"
@@ -77,7 +78,7 @@ func ServeStream(ctx context.Context, rwc io.ReadWriteCloser, opts Options) erro
 	// contract; under synchronous dispatch the request is recycled as soon as
 	// the handler returns, racing that derivation. cells' requests complete
 	// near-instantly, so $/cancelRequest support isn't worth the tradeoff.
-	conn.Go(ctx, s.lifecycleGuard(protocol.ServerHandler(s, jsonrpc2.MethodNotFoundHandler)))
+	conn.Go(ctx, recoverPanics(os.Stderr, s.lifecycleGuard(protocol.ServerHandler(s, jsonrpc2.MethodNotFoundHandler))))
 	<-conn.Done()
 	return nil
 }
@@ -170,6 +171,29 @@ func (s *server) lifecycleGuard(next jsonrpc2.Handler) jsonrpc2.Handler {
 		default:
 			return nil, nil
 		}
+	}
+}
+
+// recoverPanics keeps a handler that panics from ending the session, which
+// jsonrpc2 does by failing the connection. A call that panics is answered with
+// an internal error naming the panic; a notification that panics is dropped,
+// since jsonrpc2 also fails the connection on a notification's error. Either
+// way the stack is written to stderr, which editors keep in their log of the
+// server.
+func recoverPanics(stderr io.Writer, next jsonrpc2.Handler) jsonrpc2.Handler {
+	return func(ctx context.Context, req *jsonrpc2.Request) (result any, err error) {
+		defer func() {
+			r := recover()
+			if r == nil {
+				return
+			}
+			fmt.Fprintf(stderr, "%s panicked: %v\n%s", req.Method(), r, debug.Stack())
+			result, err = nil, nil
+			if req.IsCall() {
+				err = jsonrpc2.Errorf(jsonrpc2.InternalError, "%s panicked: %v", req.Method(), r)
+			}
+		}()
+		return next(ctx, req)
 	}
 }
 
