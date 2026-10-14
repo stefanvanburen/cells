@@ -77,6 +77,23 @@ func TestFormatEditRangeNonASCII(t *testing.T) {
 	ok.Equal(t, edits[0].Range.End, protocol.Position{Line: 0, Character: 10})
 }
 
+// TestFormatInvalidUTF8 formats string literals holding bytes that are not
+// UTF-8, which the parser reads as U+FFFD and so measures as three bytes long.
+func TestFormatInvalidUTF8(t *testing.T) {
+	t.Parallel()
+
+	for _, tt := range []struct{ input, want string }{
+		{"'\x95'+1", "'\x95' + 1"},
+		{"'\x95\xff'+1", "'\x95\xff' + 1"},
+		{"'é\x95'+'\x95'", "'é\x95' + '\x95'"},
+		{"['\x95',1]", "['\x95', 1]"},
+	} {
+		got, err := lsp.Format(tt.input, lsp.Options{})
+		ok.NoError(t, err)
+		ok.Equal(t, got, tt.want)
+	}
+}
+
 func TestFormatParseError(t *testing.T) {
 	t.Parallel()
 	// Parse errors should return no edits (not crash).

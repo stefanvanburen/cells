@@ -70,11 +70,19 @@ func celRuneOffsetToByteOffset(s string, runeOffset int32) int {
 // literal can be anything else — CEL identifiers and operators are ASCII — so
 // the difference shows up as soon as a multi-byte character precedes a token.
 //
-// The conversion is therefore exact: translate Start from runes to bytes, then
-// add the length unchanged.
+// The length is that of the token as ANTLR decoded it, which matches the
+// source except where the source is not valid UTF-8: each invalid byte is
+// decoded as U+FFFD, three bytes long. So Start is translated from runes to
+// bytes, and the end found by walking the source from there, counting each
+// rune at its decoded length, until the token's length is used up.
 func celOffsetRangeToByteRange(exprString string, r celast.OffsetRange) (byteStart, byteStop int) {
 	byteStart = celRuneOffsetToByteOffset(exprString, r.Start)
-	byteStop = min(byteStart+int(r.Stop-r.Start), len(exprString))
+	byteStop = byteStart
+	for decoded := int32(0); decoded < r.Stop-r.Start && byteStop < len(exprString); {
+		c, size := utf8.DecodeRuneInString(exprString[byteStop:])
+		decoded += int32(utf8.RuneLen(c))
+		byteStop += size
+	}
 	return byteStart, byteStop
 }
 
