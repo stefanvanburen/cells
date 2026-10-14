@@ -133,7 +133,7 @@ func TestExtensionFactories(t *testing.T) {
 	}
 	covered = append(covered, "protos") // exercised by TestExtensionProtos
 	slices.Sort(covered)
-	ok.DeepEqual(t, covered, lsp.ExtensionNames())
+	ok.Equal(t, covered, lsp.ExtensionNames())
 
 	for _, tt := range tests {
 		t.Run(tt.ext, func(t *testing.T) {

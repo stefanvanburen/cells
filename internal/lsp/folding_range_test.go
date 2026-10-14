@@ -48,7 +48,7 @@ func TestFoldingRange(t *testing.T) {
 			for _, r := range result {
 				got = append(got, fmt.Sprintf("%d-%d %s", r.StartLine+1, r.EndLine+1, r.Kind))
 			}
-			ok.DeepEqual(t, got, tt.want)
+			ok.Equal(t, got, tt.want)
 		})
 	}
 }

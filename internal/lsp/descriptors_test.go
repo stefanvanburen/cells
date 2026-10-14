@@ -334,7 +334,7 @@ variables:
 		items := completionAt(t, conn, celPath, protocol.Position{Line: 0, Character: 8})
 		// A message has fields and no member functions of its own, so its
 		// fields are the whole of what can follow the dot.
-		ok.DeepEqual(t, labelsOf(items), []string{"inner", "method", "nested", "retries", "tags"})
+		ok.Equal(t, labelsOf(items), []string{"inner", "method", "nested", "retries", "tags"})
 
 		// Each carries its type, and its documentation from the .proto file.
 		for _, item := range items {

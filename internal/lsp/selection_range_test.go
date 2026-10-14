@@ -52,7 +52,7 @@ func TestSelectionRange(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
-			ok.DeepEqual(t, selections(t, tt.src), tt.want)
+			ok.Equal(t, selections(t, tt.src), tt.want)
 		})
 	}
 }

@@ -138,7 +138,7 @@ func TestInlayHintsLoopVariableTypes(t *testing.T) {
 					got = append(got, fmt.Sprintf("%d:%d %s", hint.Position.Line+1, hint.Position.Character+1, label))
 				}
 			}
-			ok.DeepEqual(t, got, tt.want)
+			ok.Equal(t, got, tt.want)
 		})
 	}
 }
@@ -159,5 +159,5 @@ func TestInlayHintsCostLimit(t *testing.T) {
 			results = append(results, label)
 		}
 	}
-	ok.DeepEqual(t, results, nil)
+	ok.Equal(t, results, nil)
 }

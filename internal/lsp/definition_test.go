@@ -281,6 +281,6 @@ func TestCelBindReferences(t *testing.T) {
 	for _, col := range []int{10, 20, 24} {
 		got, err := lsp.References(expr, 1, col, opts)
 		ok.MustNoError(t, err)
-		ok.DeepEqual(t, got, want)
+		ok.Equal(t, got, want)
 	}
 }
