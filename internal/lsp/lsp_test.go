@@ -57,7 +57,15 @@ func setupLSPServer(t *testing.T, testFilePath string) (jsonrpc2.Conn, uri.URI) 
 	testURI := uri.File(testFilePath)
 
 	var initResult protocol.InitializeResult
-	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &initResult)
+	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{
+		Capabilities: protocol.ClientCapabilities{
+			TextDocument: &protocol.TextDocumentClientCapabilities{
+				Completion: &protocol.CompletionClientCapabilities{
+					CompletionItem: &protocol.ClientCompletionItemOptions{LabelDetailsSupport: new(true)},
+				},
+			},
+		},
+	}, &initResult)
 	ok.MustNoError(t, err)
 
 	err = clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{})

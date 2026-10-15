@@ -336,6 +336,9 @@ func TestCompletionItemProperties(t *testing.T) {
 		wantSnippet    bool
 		wantInsertText string
 		wantDoc        bool
+		// wantAfterLabel is what the client shows after the label; empty
+		// means the item has no labelDetails.
+		wantAfterLabel string
 	}{
 		{
 			name:           "global function int",
@@ -345,6 +348,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantSnippet:    true,
 			wantInsertText: "int($1)",
 			wantDoc:        true,
+			wantAfterLabel: "(int) -> int",
 		},
 		{
 			name:           "member method contains",
@@ -355,6 +359,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantSnippet:    true,
 			wantInsertText: "contains($1)",
 			wantDoc:        true,
+			wantAfterLabel: "(string) -> bool",
 		},
 		{
 			name:           "member method getFullYear",
@@ -365,6 +370,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantSnippet:    true,
 			wantInsertText: "getFullYear($1)",
 			wantDoc:        true,
+			wantAfterLabel: "() -> int",
 		},
 		{
 			name:           "macro exists",
@@ -375,22 +381,25 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantInsertText: "exists($1)",
 		},
 		{
-			name:     "keyword true",
-			file:     "testdata/completion/invoked.cel",
-			label:    "true",
-			wantKind: protocol.CompletionItemKindKeyword,
+			name:           "keyword true",
+			file:           "testdata/completion/invoked.cel",
+			label:          "true",
+			wantKind:       protocol.CompletionItemKindKeyword,
+			wantAfterLabel: " bool",
 		},
 		{
-			name:     "keyword false",
-			file:     "testdata/completion/invoked.cel",
-			label:    "false",
-			wantKind: protocol.CompletionItemKindKeyword,
+			name:           "keyword false",
+			file:           "testdata/completion/invoked.cel",
+			label:          "false",
+			wantKind:       protocol.CompletionItemKindKeyword,
+			wantAfterLabel: " bool",
 		},
 		{
-			name:     "keyword null",
-			file:     "testdata/completion/invoked.cel",
-			label:    "null",
-			wantKind: protocol.CompletionItemKindKeyword,
+			name:           "keyword null",
+			file:           "testdata/completion/invoked.cel",
+			label:          "null",
+			wantKind:       protocol.CompletionItemKindKeyword,
+			wantAfterLabel: " null_type",
 		},
 		{
 			name:           "size as member on string",
@@ -401,6 +410,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantSnippet:    true,
 			wantInsertText: "size($1)",
 			wantDoc:        true,
+			wantAfterLabel: "() -> int",
 		},
 		{
 			name:           "size as global",
@@ -410,6 +420,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantSnippet:    true,
 			wantInsertText: "size($1)",
 			wantDoc:        true,
+			wantAfterLabel: "(bytes) -> int",
 		},
 		{
 			name:           "matches as member on string",
@@ -420,6 +431,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantSnippet:    true,
 			wantInsertText: "matches($1)",
 			wantDoc:        true,
+			wantAfterLabel: "(string) -> bool",
 		},
 		{
 			name:           "type conversion duration",
@@ -429,6 +441,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantSnippet:    true,
 			wantInsertText: "duration($1)",
 			wantDoc:        true,
+			wantAfterLabel: "(google.protobuf.Duration) -> google.protobuf.Duration",
 		},
 		{
 			name:           "type conversion timestamp",
@@ -438,6 +451,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantSnippet:    true,
 			wantInsertText: "timestamp($1)",
 			wantDoc:        true,
+			wantAfterLabel: "(google.protobuf.Timestamp) -> google.protobuf.Timestamp",
 		},
 	}
 
@@ -469,6 +483,12 @@ func TestCompletionItemProperties(t *testing.T) {
 				ok.True(t, item.Documentation != nil)
 			} else {
 				ok.True(t, item.Documentation == nil)
+			}
+
+			if tt.wantAfterLabel == "" {
+				ok.True(t, item.LabelDetails == nil)
+			} else if ok.True(t, item.LabelDetails != nil && item.LabelDetails.Detail != nil) {
+				ok.Equal(t, *item.LabelDetails.Detail, tt.wantAfterLabel)
 			}
 		})
 	}
@@ -528,4 +548,31 @@ func TestCompletionCapabilities(t *testing.T) {
 	ok.True(t, result.Capabilities.CompletionProvider != nil)
 	ok.True(t, len(result.Capabilities.CompletionProvider.TriggerCharacters) > 0)
 	ok.Equal(t, result.Capabilities.CompletionProvider.TriggerCharacters[0], ".")
+	ok.True(t, result.Capabilities.CompletionProvider.CompletionItem != nil)
+	ok.Equal(t, *result.Capabilities.CompletionProvider.CompletionItem.LabelDetailsSupport, true)
+}
+
+// A client that does not say it shows labelDetails gets none.
+func TestCompletionLabelDetailsUnsupported(t *testing.T) {
+	t.Parallel()
+	ctx := t.Context()
+
+	clientRPC := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{})
+	var result protocol.InitializeResult
+	_, err := clientRPC.Call(ctx, "initialize", protocol.InitializeParams{}, &result)
+	ok.MustNoError(t, err)
+	ok.MustNoError(t, clientRPC.Notify(ctx, "initialized", protocol.InitializedParams{}))
+
+	testURI := lspuri.URI("file:///test.cel")
+	ok.MustNoError(t, clientRPC.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
+		TextDocument: protocol.TextDocumentItem{
+			URI: testURI, LanguageID: "cel", Version: 1, Text: "true",
+		},
+	}))
+
+	list := requestCompletion(t, clientRPC, testURI, protocol.Position{}, protocol.CompletionTriggerKindInvoked, "")
+	ok.True(t, len(list.Items) > 0)
+	for _, item := range list.Items {
+		ok.True(t, item.LabelDetails == nil)
+	}
 }

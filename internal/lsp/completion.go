@@ -31,10 +31,7 @@ func (s *server) Completion(ctx context.Context, params *protocol.CompletionPara
 		receiverType := receiverTypeAtDot(f.content, params.Position, docEnv.celEnv)
 		items := fieldCompletionItems(docEnv, receiverType)
 		items = append(items, memberCompletionItems(docEnv.celEnv, receiverType)...)
-		return &protocol.CompletionList{
-			IsIncomplete: false,
-			Items:        items,
-		}, nil
+		return s.completionList(items), nil
 	}
 
 	// Check for operator context to filter by expected type.
@@ -48,10 +45,33 @@ func (s *server) Completion(ctx context.Context, params *protocol.CompletionPara
 	items = append(items, globalCompletionItems(docEnv.celEnv, expectedType)...)
 	items = append(items, macroCompletionItems(docEnv.celEnv, expectedType)...)
 	items = append(items, keywordCompletionItems(docEnv.celEnv, expectedType)...)
+	return s.completionList(items), nil
+}
+
+// completionList returns the items as a complete list, leaving out their
+// labelDetails if the client does not show them.
+func (s *server) completionList(items []protocol.CompletionItem) *protocol.CompletionList {
+	if !s.completionLabelDetails {
+		for i := range items {
+			items[i].LabelDetails = nil
+		}
+	}
 	return &protocol.CompletionList{
 		IsIncomplete: false,
 		Items:        items,
-	}, nil
+	}
+}
+
+// typeLabelDetails is the labelDetails of an item that has a type. The client
+// shows it directly after the item's label, so it starts with a space.
+func typeLabelDetails(t *types.Type) *protocol.CompletionItemLabelDetails {
+	return &protocol.CompletionItemLabelDetails{Detail: new(" " + t.String())}
+}
+
+// signatureLabelDetails is the labelDetails of a function's overload, which
+// the client shows after the function's name.
+func signatureLabelDetails(o *decls.OverloadDecl) *protocol.CompletionItemLabelDetails {
+	return &protocol.CompletionItemLabelDetails{Detail: new(formatOverloadParams(o))}
 }
 
 // isDotContext returns true if the character immediately before the cursor
@@ -228,6 +248,7 @@ func memberCompletionItems(celEnv *cel.Env, receiverType *types.Type) []protocol
 		items = append(items, protocol.CompletionItem{
 			Label:            name,
 			Kind:             protocol.CompletionItemKindMethod,
+			LabelDetails:     signatureLabelDetails(matchingOverloads[0]),
 			Detail:           protocol.NewOptional(formatOverloadSignature(fn.Name(), matchingOverloads[0])),
 			Documentation:    docString(fn.Description()),
 			InsertText:       protocol.NewOptional(name + "($1)"),
@@ -251,6 +272,7 @@ func variableCompletionItems(celEnv *cel.Env, expectedType *types.Type) []protoc
 		}
 		items = append(items, protocol.CompletionItem{
 			Label:         variable.Name(),
+			LabelDetails:  typeLabelDetails(variable.Type()),
 			Kind:          protocol.CompletionItemKindVariable,
 			Detail:        protocol.NewOptional(variable.Type().String()),
 			Documentation: docString(variable.Description()),
@@ -284,6 +306,7 @@ func fieldCompletionItems(docEnv *environment, receiverType *types.Type) []proto
 			Documentation: docString(docEnv.fieldDoc(receiverType, name)),
 		}
 		if fieldType, ok := provider.FindStructFieldType(typeName, name); ok {
+			item.LabelDetails = typeLabelDetails(fieldType.Type)
 			item.Detail = protocol.NewOptional(fieldType.Type.String())
 		}
 		items = append(items, item)
@@ -318,10 +341,12 @@ func globalCompletionItems(celEnv *cel.Env, expectedType *types.Type) []protocol
 			continue
 		}
 
+		overload := firstGlobalOverload(fn)
 		items = append(items, protocol.CompletionItem{
 			Label:            name,
+			LabelDetails:     signatureLabelDetails(overload),
 			Kind:             protocol.CompletionItemKindFunction,
-			Detail:           protocol.NewOptional(globalFunctionDetail(fn)),
+			Detail:           protocol.NewOptional(formatOverloadSignature(fn.Name(), overload)),
 			Documentation:    docString(fn.Description()),
 			InsertText:       protocol.NewOptional(name + "($1)"),
 			InsertTextFormat: protocol.InsertTextFormatSnippet,
@@ -376,9 +401,10 @@ func keywordCompletionItems(celEnv *cel.Env, expectedType *types.Type) []protoco
 			continue
 		}
 		items = append(items, protocol.CompletionItem{
-			Label:  kw,
-			Kind:   protocol.CompletionItemKindKeyword,
-			Detail: protocol.NewOptional(kwType.String()),
+			Label:        kw,
+			LabelDetails: typeLabelDetails(kwType),
+			Kind:         protocol.CompletionItemKindKeyword,
+			Detail:       protocol.NewOptional(kwType.String()),
 		})
 	}
 	return items
@@ -393,33 +419,39 @@ func isOperatorOrInternal(name string) bool {
 	return strings.HasPrefix(name, "@") || strings.HasPrefix(name, "_")
 }
 
-// globalFunctionDetail produces a short detail string for a global function.
-func globalFunctionDetail(fn *decls.FunctionDecl) string {
+// firstGlobalOverload returns the first of fn's overloads that is not a
+// member function.
+func firstGlobalOverload(fn *decls.FunctionDecl) *decls.OverloadDecl {
 	for _, o := range fn.OverloadDecls() {
-		if o.IsMemberFunction() {
-			continue
+		if !o.IsMemberFunction() {
+			return o
 		}
-		return formatOverloadSignature(fn.Name(), o)
 	}
-	return ""
+	return nil
 }
 
 // formatOverloadSignature formats a single overload as "name(arg1, arg2) -> result"
 // or "receiver.name(arg1) -> result" for member functions.
 func formatOverloadSignature(name string, o *decls.OverloadDecl) string {
-	args := o.ArgTypes()
-	var parts []string
-	start := 0
 	prefix := ""
-	if o.IsMemberFunction() && len(args) > 0 {
+	if args := o.ArgTypes(); o.IsMemberFunction() && len(args) > 0 {
 		prefix = args[0].String() + "."
-		start = 1
 	}
-	for _, a := range args[start:] {
-		parts = append(parts, a.String())
+	return prefix + name + formatOverloadParams(o)
+}
+
+// formatOverloadParams formats a single overload's parameters and result as
+// "(arg1, arg2) -> result", leaving out a member function's receiver.
+func formatOverloadParams(o *decls.OverloadDecl) string {
+	args := o.ArgTypes()
+	if o.IsMemberFunction() && len(args) > 0 {
+		args = args[1:]
 	}
-	result := o.ResultType().String()
-	return fmt.Sprintf("%s%s(%s) -> %s", prefix, name, strings.Join(parts, ", "), result)
+	parts := make([]string, len(args))
+	for i, a := range args {
+		parts[i] = a.String()
+	}
+	return fmt.Sprintf("(%s) -> %s", strings.Join(parts, ", "), o.ResultType().String())
 }
 
 func docString(s string) protocol.InlayHintTooltip {

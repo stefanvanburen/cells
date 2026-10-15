@@ -148,6 +148,10 @@ type server struct {
 	// that do both showing every diagnostic twice.
 	pullDiagnostics bool
 
+	// completionLabelDetails is whether the client shows a completion item's
+	// labelDetails, which it says when it initializes.
+	completionLabelDetails bool
+
 	initialized atomic.Bool // set by Initialize; read by the lifecycle guard
 	shutdown    atomic.Bool // set by Shutdown; read by Exit to pick its process exit code
 }
@@ -328,6 +332,11 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 			return nil, fmt.Errorf("invalid initializationOptions: %w", err)
 		}
 	}
+	if params != nil {
+		if c := params.Capabilities.TextDocument; c != nil && c.Completion != nil && c.Completion.CompletionItem != nil {
+			s.completionLabelDetails = c.Completion.CompletionItem.LabelDetailsSupport != nil && *c.Completion.CompletionItem.LabelDetailsSupport
+		}
+	}
 	s.initialized.Store(true)
 	return &protocol.InitializeResult{
 		Capabilities: protocol.ServerCapabilities{
@@ -339,6 +348,7 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 			DocumentFormattingProvider: protocol.Boolean(true),
 			CompletionProvider: &protocol.CompletionOptions{
 				TriggerCharacters: []string{"."},
+				CompletionItem:    &protocol.ServerCompletionItemOptions{LabelDetailsSupport: new(true)},
 			},
 			SemanticTokensProvider: &protocol.SemanticTokensOptions{
 				Legend: protocol.SemanticTokensLegend{
