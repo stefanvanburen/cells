@@ -48,12 +48,16 @@ func (s *server) Completion(ctx context.Context, params *protocol.CompletionPara
 	return s.completionList(items), nil
 }
 
-// completionList returns the items as a complete list, leaving out their
-// labelDetails if the client does not show them.
+// completionList returns the items as a complete list. An item's labelDetails
+// say what its detail does, so a client that shows them gets them in place of
+// the detail, and any other client gets the detail alone.
 func (s *server) completionList(items []protocol.CompletionItem) *protocol.CompletionList {
-	if !s.completionLabelDetails {
-		for i := range items {
+	for i := range items {
+		switch {
+		case !s.completionLabelDetails:
 			items[i].LabelDetails = nil
+		case items[i].LabelDetails != nil:
+			items[i].Detail = protocol.Optional[string]{}
 		}
 	}
 	return &protocol.CompletionList{
@@ -62,16 +66,21 @@ func (s *server) completionList(items []protocol.CompletionItem) *protocol.Compl
 	}
 }
 
-// typeLabelDetails is the labelDetails of an item that has a type. The client
-// shows it directly after the item's label, so it starts with a space.
+// typeLabelDetails is the labelDetails of an item that has a type, which the
+// client shows apart from the item's label.
 func typeLabelDetails(t *types.Type) *protocol.CompletionItemLabelDetails {
-	return &protocol.CompletionItemLabelDetails{Detail: new(" " + t.String())}
+	return &protocol.CompletionItemLabelDetails{Description: new(t.String())}
 }
 
-// signatureLabelDetails is the labelDetails of a function's overload, which
-// the client shows after the function's name.
+// signatureLabelDetails is the labelDetails of a function's overload: its
+// parameters and result, which the client shows directly after the function's
+// name, and a member function's receiver type, which it shows apart.
 func signatureLabelDetails(o *decls.OverloadDecl) *protocol.CompletionItemLabelDetails {
-	return &protocol.CompletionItemLabelDetails{Detail: new(formatOverloadParams(o))}
+	details := &protocol.CompletionItemLabelDetails{Detail: new(formatOverloadParams(o))}
+	if args := o.ArgTypes(); o.IsMemberFunction() && len(args) > 0 {
+		details.Description = new(args[0].String())
+	}
+	return details
 }
 
 // isDotContext returns true if the character immediately before the cursor

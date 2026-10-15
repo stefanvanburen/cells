@@ -336,9 +336,11 @@ func TestCompletionItemProperties(t *testing.T) {
 		wantSnippet    bool
 		wantInsertText string
 		wantDoc        bool
-		// wantAfterLabel is what the client shows after the label; empty
-		// means the item has no labelDetails.
+		// wantAfterLabel and wantLabelDesc are the labelDetails' detail,
+		// which the client shows directly after the label, and description,
+		// which it shows apart. Both empty means the item has no labelDetails.
 		wantAfterLabel string
+		wantLabelDesc  string
 	}{
 		{
 			name:           "global function int",
@@ -360,6 +362,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantInsertText: "contains($1)",
 			wantDoc:        true,
 			wantAfterLabel: "(string) -> bool",
+			wantLabelDesc:  "string",
 		},
 		{
 			name:           "member method getFullYear",
@@ -371,6 +374,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantInsertText: "getFullYear($1)",
 			wantDoc:        true,
 			wantAfterLabel: "() -> int",
+			wantLabelDesc:  "google.protobuf.Timestamp",
 		},
 		{
 			name:           "macro exists",
@@ -381,25 +385,25 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantInsertText: "exists($1)",
 		},
 		{
-			name:           "keyword true",
-			file:           "testdata/completion/invoked.cel",
-			label:          "true",
-			wantKind:       protocol.CompletionItemKindKeyword,
-			wantAfterLabel: " bool",
+			name:          "keyword true",
+			file:          "testdata/completion/invoked.cel",
+			label:         "true",
+			wantKind:      protocol.CompletionItemKindKeyword,
+			wantLabelDesc: "bool",
 		},
 		{
-			name:           "keyword false",
-			file:           "testdata/completion/invoked.cel",
-			label:          "false",
-			wantKind:       protocol.CompletionItemKindKeyword,
-			wantAfterLabel: " bool",
+			name:          "keyword false",
+			file:          "testdata/completion/invoked.cel",
+			label:         "false",
+			wantKind:      protocol.CompletionItemKindKeyword,
+			wantLabelDesc: "bool",
 		},
 		{
-			name:           "keyword null",
-			file:           "testdata/completion/invoked.cel",
-			label:          "null",
-			wantKind:       protocol.CompletionItemKindKeyword,
-			wantAfterLabel: " null_type",
+			name:          "keyword null",
+			file:          "testdata/completion/invoked.cel",
+			label:         "null",
+			wantKind:      protocol.CompletionItemKindKeyword,
+			wantLabelDesc: "null_type",
 		},
 		{
 			name:           "size as member on string",
@@ -411,6 +415,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantInsertText: "size($1)",
 			wantDoc:        true,
 			wantAfterLabel: "() -> int",
+			wantLabelDesc:  "string",
 		},
 		{
 			name:           "size as global",
@@ -432,6 +437,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantInsertText: "matches($1)",
 			wantDoc:        true,
 			wantAfterLabel: "(string) -> bool",
+			wantLabelDesc:  "string",
 		},
 		{
 			name:           "type conversion duration",
@@ -485,11 +491,21 @@ func TestCompletionItemProperties(t *testing.T) {
 				ok.True(t, item.Documentation == nil)
 			}
 
-			if tt.wantAfterLabel == "" {
-				ok.True(t, item.LabelDetails == nil)
-			} else if ok.True(t, item.LabelDetails != nil && item.LabelDetails.Detail != nil) {
-				ok.Equal(t, *item.LabelDetails.Detail, tt.wantAfterLabel)
+			var afterLabel, labelDesc string
+			if ld := item.LabelDetails; ld != nil {
+				if ld.Detail != nil {
+					afterLabel = *ld.Detail
+				}
+				if ld.Description != nil {
+					labelDesc = *ld.Description
+				}
 			}
+			ok.Equal(t, afterLabel, tt.wantAfterLabel)
+			ok.Equal(t, labelDesc, tt.wantLabelDesc)
+			ok.Equal(t, item.LabelDetails == nil, tt.wantAfterLabel == "" && tt.wantLabelDesc == "")
+			// The labelDetails take the place of the detail.
+			_, hasDetail := item.Detail.Get()
+			ok.Equal(t, hasDetail, item.LabelDetails == nil)
 		})
 	}
 }
@@ -574,5 +590,7 @@ func TestCompletionLabelDetailsUnsupported(t *testing.T) {
 	ok.True(t, len(list.Items) > 0)
 	for _, item := range list.Items {
 		ok.True(t, item.LabelDetails == nil)
+		_, hasDetail := item.Detail.Get()
+		ok.True(t, hasDetail)
 	}
 }
