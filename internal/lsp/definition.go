@@ -77,13 +77,17 @@ func macroBindingLocation(f *file, nativeAST *celast.AST, info *identifierInfo) 
 	if len(ranges) == 0 {
 		return protocol.Location{}, false
 	}
-	declaration := slices.MinFunc(ranges, func(a, b protocol.Range) int {
+	return protocol.Location{URI: f.uri, Range: firstRange(ranges)}, true
+}
+
+// firstRange returns the range that starts earliest in the file.
+func firstRange(ranges []protocol.Range) protocol.Range {
+	return slices.MinFunc(ranges, func(a, b protocol.Range) int {
 		return cmp.Or(
 			cmp.Compare(a.Start.Line, b.Start.Line),
 			cmp.Compare(a.Start.Character, b.Start.Character),
 		)
 	})
-	return protocol.Location{URI: f.uri, Range: declaration}, true
 }
 
 // declaresVariable reports whether the environment declares a variable of this

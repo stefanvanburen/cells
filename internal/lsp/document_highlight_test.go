@@ -1,6 +1,7 @@
 package lsp_test
 
 import (
+	"slices"
 	"testing"
 
 	"go.lsp.dev/jsonrpc2"
@@ -29,6 +30,7 @@ func TestDocumentHighlight(t *testing.T) {
 		file           string
 		position       protocol.Position
 		expectedRanges []protocol.Range // Exact ranges expected
+		writes         []protocol.Range // The expected ranges highlighted as writes; the rest are reads
 		description    string
 	}{
 		// Top-level variable highlights - simple case
@@ -66,6 +68,9 @@ func TestDocumentHighlight(t *testing.T) {
 				{Start: protocol.Position{Line: 0, Character: 14}, End: protocol.Position{Line: 0, Character: 15}},
 				{Start: protocol.Position{Line: 0, Character: 17}, End: protocol.Position{Line: 0, Character: 18}},
 			},
+			writes: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 14}, End: protocol.Position{Line: 0, Character: 15}},
+			},
 			description: "Highlight loop variable in map ([1, 2, 3].map(x, x * 2))",
 		},
 
@@ -76,6 +81,9 @@ func TestDocumentHighlight(t *testing.T) {
 			expectedRanges: []protocol.Range{
 				{Start: protocol.Position{Line: 0, Character: 17}, End: protocol.Position{Line: 0, Character: 18}},
 				{Start: protocol.Position{Line: 0, Character: 20}, End: protocol.Position{Line: 0, Character: 21}},
+			},
+			writes: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 17}, End: protocol.Position{Line: 0, Character: 18}},
 			},
 			description: "Highlight loop variable in exists ([1, 2, 3].exists(x, x == 2))",
 		},
@@ -123,6 +131,14 @@ func TestDocumentHighlight(t *testing.T) {
 			// checks below index into both slices.
 			if !ok.Equal(t, len(highlights), len(tc.expectedRanges)) {
 				return
+			}
+
+			for _, hl := range highlights {
+				want := protocol.DocumentHighlightKindRead
+				if slices.Contains(tc.writes, hl.Range) {
+					want = protocol.DocumentHighlightKindWrite
+				}
+				ok.Equal(t, hl.Kind, want)
 			}
 
 			// Sort both slices for comparison (order not guaranteed)
