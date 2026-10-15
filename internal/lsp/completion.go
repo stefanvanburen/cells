@@ -240,9 +240,6 @@ func memberCompletionItems(celEnv *cel.Env, receiverType *types.Type) []protocol
 	return items
 }
 
-// globalCompletionItems returns completion items for global functions and type
-// conversions. If expectedType is non-nil, only functions that can return a
-// compatible type are included.
 // variableCompletionItems offers the variables the environment declares. There
 // are none until a configuration declares some, which is why plain CEL offers
 // only functions and macros.
@@ -297,6 +294,9 @@ func fieldCompletionItems(docEnv *environment, receiverType *types.Type) []proto
 	return items
 }
 
+// globalCompletionItems returns completion items for global functions and type
+// conversions. If expectedType is non-nil, only functions that can return a
+// compatible type are included.
 func globalCompletionItems(celEnv *cel.Env, expectedType *types.Type) []protocol.CompletionItem {
 	var items []protocol.CompletionItem
 	for name, fn := range celEnv.Functions() {
