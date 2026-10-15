@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common/ast"
 	"cel.dev/cel-go/common/decls"
 	"cel.dev/cel-go/common/operators"
 	"cel.dev/cel-go/common/types"
@@ -59,8 +60,14 @@ func (s *server) Completion(ctx context.Context, params *protocol.CompletionPara
 		expectedType = expectedTypeAfterOperator(f.content, params.Position, docEnv.celEnv)
 	}
 
+	var bound map[string]string
+	if f != nil {
+		bound = boundNamesAt(f.content[:offset], tokens, docEnv.celEnv)
+	}
+
 	var items []protocol.CompletionItem
-	items = append(items, variableCompletionItems(docEnv.celEnv, expectedType)...)
+	items = append(items, boundCompletionItems(bound)...)
+	items = append(items, variableCompletionItems(docEnv.celEnv, expectedType, bound)...)
 	items = append(items, globalCompletionItems(docEnv.celEnv, expectedType)...)
 	items = append(items, macroCompletionItems(docEnv.celEnv, expectedType)...)
 	items = append(items, keywordCompletionItems(docEnv.celEnv, expectedType)...)
@@ -156,6 +163,97 @@ func endsOperand(tokens []celToken, offset int) bool {
 		return last.end < offset
 	}
 	return false
+}
+
+// completionPlaceholder stands for the operand being completed when no name is
+// being typed at the cursor, so that the source before the cursor can parse.
+const completionPlaceholder = "cells_completion_placeholder"
+
+// boundNamesAt returns the names macros bind at the end of before, the source
+// up to the cursor, each mapped to the name of the macro that binds it.
+//
+// The source is rarely whole while it is being typed, so what is parsed is
+// before with a placeholder name at the end if none is being typed there, and
+// with the brackets it leaves open closed, failing which, with the
+// conditional it may have left open given an alternative as well. Where
+// neither parses, there are no names to offer.
+func boundNamesAt(before string, tokens []celToken, celEnv *cel.Env) map[string]string {
+	src := before
+	if n := len(tokens); n == 0 || tokens[n-1].kind != gen.CELLexerIDENTIFIER || tokens[n-1].end != len(before) {
+		src += completionPlaceholder
+	}
+	nameEnd := len(src)
+	var open []int
+	for _, tok := range tokens {
+		switch tok.kind {
+		case gen.CELLexerLPAREN, gen.CELLexerLBRACKET, gen.CELLexerLBRACE:
+			open = append(open, tok.kind)
+		case gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
+			if len(open) > 0 {
+				open = open[:len(open)-1]
+			}
+		}
+	}
+	closers := map[int]string{gen.CELLexerLPAREN: ")", gen.CELLexerLBRACKET: "]", gen.CELLexerLBRACE: "}"}
+	var b strings.Builder
+	for _, kind := range slices.Backward(open) {
+		b.WriteString(closers[kind])
+	}
+	closing := b.String()
+
+	var parsed *cel.Ast
+	for _, alternative := range []string{"", " : " + completionPlaceholder} {
+		if p, iss := celEnv.Parse(src + alternative + closing); iss.Err() == nil {
+			parsed, src = p, src+alternative+closing
+			break
+		}
+	}
+	if parsed == nil {
+		return nil
+	}
+	nativeAST := parsed.NativeRep()
+	root, sourceInfo := nativeAST.Expr(), nativeAST.SourceInfo()
+	var inScope map[string]int64
+	walkScopes(root, func(ident ast.Expr, scope map[string]int64) {
+		if _, end, ok := exprByteRange(src, sourceInfo, ident.ID()); ok && end == nameEnd {
+			inScope = scope
+		}
+	})
+
+	// The comprehensions also bind names of their own making, such as the
+	// accumulator of [1, 2].map(x, x), which nobody wrote and nobody can
+	// refer to. Only the names a macro declares are offered.
+	bound := make(map[string]string)
+	for name, id := range inScope {
+		comp := findExprByID(root, id)
+		if comp == nil {
+			continue
+		}
+		for _, decl := range macroDeclarations(sourceInfo, comp) {
+			if decl.AsIdent() == name {
+				call, _ := sourceInfo.GetMacroCall(id)
+				bound[name] = call.AsCall().FunctionName()
+			}
+		}
+	}
+	return bound
+}
+
+// boundCompletionItems offers the names macros bind where the cursor is, which
+// bound maps to the names of those macros.
+func boundCompletionItems(bound map[string]string) []protocol.CompletionItem {
+	items := make([]protocol.CompletionItem, 0, len(bound))
+	for name, macro := range bound {
+		items = append(items, protocol.CompletionItem{
+			Label:  name,
+			Kind:   protocol.CompletionItemKindVariable,
+			Detail: protocol.NewOptional("bound by " + macro),
+		})
+	}
+	slices.SortFunc(items, func(a, b protocol.CompletionItem) int {
+		return cmp.Compare(a.Label, b.Label)
+	})
+	return items
 }
 
 // receiverTypeBefore compiles the source before a member's dot to find the
@@ -329,13 +427,14 @@ func memberCompletionItems(celEnv *cel.Env, receiverType *types.Type) []protocol
 	return items
 }
 
-// variableCompletionItems offers the variables the environment declares. There
-// are none until a configuration declares some, which is why plain CEL offers
-// only functions and macros.
-func variableCompletionItems(celEnv *cel.Env, expectedType *types.Type) []protocol.CompletionItem {
+// variableCompletionItems offers the variables the environment declares,
+// leaving out those a name in bound shadows. There are none until a
+// configuration declares some, which is why plain CEL offers only functions
+// and macros.
+func variableCompletionItems(celEnv *cel.Env, expectedType *types.Type, bound map[string]string) []protocol.CompletionItem {
 	var items []protocol.CompletionItem
 	for _, variable := range celEnv.Variables() {
-		if !typeMatches(expectedType, variable.Type()) {
+		if _, shadowed := bound[variable.Name()]; shadowed || !typeMatches(expectedType, variable.Type()) {
 			continue
 		}
 		items = append(items, protocol.CompletionItem{

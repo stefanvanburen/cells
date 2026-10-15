@@ -79,20 +79,30 @@ func macroDeclarations(sourceInfo *ast.SourceInfo, comp ast.Expr) []ast.Expr {
 // nameBindings maps each identifier in the expression rooted at root that a
 // comprehension binds to that comprehension's ID. An identifier it leaves out
 // names something the environment declares.
+func nameBindings(root ast.Expr) map[int64]int64 {
+	bindings := make(map[int64]int64)
+	walkScopes(root, func(ident ast.Expr, scope map[string]int64) {
+		if id, bound := scope[ident.AsIdent()]; bound {
+			bindings[ident.ID()] = id
+		}
+	})
+	return bindings
+}
+
+// walkScopes calls visit with each identifier in the expression rooted at root
+// and the names in scope there, each mapped to the ID of the comprehension
+// that binds it.
 //
 // A comprehension evaluates its range and initial accumulator outside itself,
 // its condition and step with its iteration variables and accumulator bound,
 // and its result with only the accumulator bound. cel.bind binds its name as
 // the accumulator. An inner binding of a name shadows an outer one.
-func nameBindings(root ast.Expr) map[int64]int64 {
-	bindings := make(map[int64]int64)
+func walkScopes(root ast.Expr, visit func(ident ast.Expr, scope map[string]int64)) {
 	var walk func(e ast.Expr, scope map[string]int64)
 	walk = func(e ast.Expr, scope map[string]int64) {
 		switch e.Kind() {
 		case ast.IdentKind:
-			if id, bound := scope[e.AsIdent()]; bound {
-				bindings[e.ID()] = id
-			}
+			visit(e, scope)
 		case ast.SelectKind:
 			walk(e.AsSelect().Operand(), scope)
 		case ast.CallKind:
@@ -128,7 +138,6 @@ func nameBindings(root ast.Expr) map[int64]int64 {
 		}
 	}
 	walk(root, map[string]int64{})
-	return bindings
 }
 
 // bind returns scope with names bound to the comprehension with the given ID.

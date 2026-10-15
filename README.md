@@ -17,7 +17,7 @@ $ go install go.vanburen.xyz/cells/cmd/cells@latest
 * Hover (including declared variable types, and message field types and comments)
 * References
 * Go to definition
-* Completion (including declared variables and message fields)
+* Completion (including declared variables, the variables macros bind, and message fields)
 * Signature help
 * Variable renaming
 * Inlay hints (expression evaluation and loop variable types)

@@ -323,6 +323,33 @@ func TestCompletionAfterToken(t *testing.T) {
 			wantPresent: []string{"contains", "startsWith"},
 			wantAbsent:  []string{"timestamp", "int", "getFullYear"},
 		},
+		// A macro's variables complete within it, and only there.
+		{
+			name:        "loop variable being typed",
+			file:        "testdata/completion/loop_var_being_typed.cel",
+			wantPresent: []string{"x", "size"},
+		},
+		{
+			name:        "in macro body",
+			file:        "testdata/completion/in_macro_body.cel",
+			wantPresent: []string{"x"},
+		},
+		{
+			name:        "in nested macro body",
+			file:        "testdata/completion/in_nested_macro_body.cel",
+			wantPresent: []string{"row", "x"},
+		},
+		{
+			name:        "in conditional",
+			file:        "testdata/completion/in_conditional.cel",
+			wantPresent: []string{"x"},
+		},
+		{
+			name:        "after macro",
+			file:        "testdata/completion/after_macro.cel",
+			wantPresent: []string{"y"},
+			wantAbsent:  []string{"x"},
+		},
 		// Nothing completes inside a literal or a comment.
 		{name: "in string", file: "testdata/completion/in_string.cel", wantNone: true},
 		{name: "in string argument", file: "testdata/completion/in_string_argument.cel", wantNone: true},
