@@ -250,18 +250,47 @@ func TestDefinitionCapability(t *testing.T) {
 // renamed to w produced cel.bindw(v, 1 + 1, w * w) — because the expansion
 // leaves behind a synthesized identifier with an empty source range, and an
 // empty range accepted an edit at the offset it started from.
-func TestCelBindRenameDoesNotCorrupt(t *testing.T) {
+// Renaming a name a macro binds, from its declaration or from any use of it,
+// renames the declaration and every use, and nothing a different binding of
+// the same name covers.
+func TestRenameMacroBinding(t *testing.T) {
 	t.Parallel()
 
-	const expr = `cel.bind(v, 1 + 1, v * v)`
-	opts := lsp.Options{Extensions: []string{"bindings"}}
-
-	// Renaming from a use and from the declaration agree, and both rename the
-	// binding along with its uses.
-	for _, col := range []int{10, 20, 24} {
-		got, err := lsp.Rename(expr, 1, col, "w", opts)
-		ok.MustNoError(t, err)
-		ok.Equal(t, got, `cel.bind(w, 1 + 1, w * w)`, ok.Sprintf("renaming at col %d", col))
+	tests := []struct {
+		expr string
+		cols []int
+		want string
+	}{
+		{
+			expr: `cel.bind(v, 1 + 1, v * v)`,
+			cols: []int{10, 20, 24},
+			want: `cel.bind(w, 1 + 1, w * w)`,
+		},
+		// The inner binding's initializer is outside it, so its v is the
+		// outer one.
+		{
+			expr: `cel.bind(v, 1, cel.bind(v, v + 1, v))`,
+			cols: []int{10, 28},
+			want: `cel.bind(w, 1, cel.bind(v, w + 1, v))`,
+		},
+		{
+			expr: `cel.bind(v, 1, cel.bind(v, v + 1, v))`,
+			cols: []int{25, 35},
+			want: `cel.bind(v, 1, cel.bind(w, v + 1, w))`,
+		},
+		{
+			expr: `{'a': 1}.all(k, v, v > 0 && k != '')`,
+			cols: []int{17, 20},
+			want: `{'a': 1}.all(k, w, w > 0 && k != '')`,
+		},
+	}
+	opts := lsp.Options{Extensions: []string{"bindings", "comprehensions"}}
+	for _, tt := range tests {
+		for _, col := range tt.cols {
+			got, err := lsp.Rename(tt.expr, 1, col, "w", opts)
+			ok.MustNoError(t, err)
+			ok.Equal(t, got, tt.want, ok.Sprintf("renaming %s at col %d", tt.expr, col))
+		}
 	}
 }
 

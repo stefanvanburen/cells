@@ -72,6 +72,18 @@ func TestReferences(t *testing.T) {
 			description: "References to xy in ('éé' + xy + xy)",
 		},
 
+		// A loop variable shadowed by a nested macro's.
+		{
+			name:     "shadowed_loop_var",
+			file:     "testdata/references/shadowed_loop_var.cel",
+			position: protocol.Position{Line: 0, Character: 19},
+			expectedRanges: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 19}, End: protocol.Position{Line: 0, Character: 20}},
+				{Start: protocol.Position{Line: 0, Character: 22}, End: protocol.Position{Line: 0, Character: 23}},
+			},
+			description: "The inner x in [[1]].map(x, x.map(x, x)), not the outer one",
+		},
+
 		// Loop variable test
 		{
 			name:     "map_loop_var_references",

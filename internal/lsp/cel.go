@@ -28,13 +28,6 @@ func isCELMacroFunction(funcName string) bool {
 		funcName == operators.Filter
 }
 
-// isCELComprehensionMacro reports whether the function name is a CEL macro
-// that binds a loop variable. It is every macro but has(), which takes a field
-// selection rather than a variable and a body.
-func isCELComprehensionMacro(funcName string) bool {
-	return isCELMacroFunction(funcName) && funcName != operators.Has
-}
-
 // celOperatorSymbol maps CEL operator function names to their operator symbols.
 func celOperatorSymbol(funcName string) (string, bool) {
 	if symbol, found := operators.FindReverse(funcName); found && symbol != "" {

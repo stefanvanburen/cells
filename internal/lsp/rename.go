@@ -3,7 +3,6 @@ package lsp
 import (
 	"context"
 	"fmt"
-	"strings"
 	"unicode"
 
 	"cel.dev/cel-go/cel"
@@ -33,8 +32,7 @@ func (topLevelScope) isScope() {}
 
 // loopVarScope represents a variable scoped to a comprehension.
 type loopVarScope struct {
-	comprehensionID int64  // ID of the comprehension expression
-	macroName       string // "map", "filter", "all", "exists", "exists_one"
+	comprehensionID int64 // ID of the comprehension expression
 }
 
 func (loopVarScope) isScope() {}
@@ -151,44 +149,14 @@ func findIdentifierAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, fileCon
 			// decides whether this is a loop variable.
 			add(e.AsIdent(), e.ID(), identifierKindTopLevel)
 
-		case ast.CallKind:
-			call := e.AsCall()
-			funcName := call.FunctionName()
-
-			// A macro still in call form declares its loop variable as the
-			// first argument, e.g. the "x" in list.map(x, x * 2).
-			if !isCELMacroFunction(funcName) || len(call.Args()) == 0 {
-				return
-			}
-			decl := call.Args()[0]
-			if decl.Kind() != ast.IdentKind {
-				return
-			}
-			loopVar := decl.AsIdent()
-			if start, end, found := findWord(fileContent, loopVar, byteStart); found && end <= byteStop {
-				if targetOffset >= start && targetOffset < end {
-					// Record the call's ID rather than the argument's: the
-					// scope of a loop variable is the macro it belongs to.
-					add(loopVar, e.ID(), identifierKindTopLevel)
-				}
-			}
-
 		case ast.ComprehensionKind:
-			// An expanded macro keeps the name it binds but not where it was
-			// written. The call the macro was written as holds the
-			// declaration, with its own range; failing that, the name has to
-			// be found in the source.
-			if name, declID, ok := macroDeclaration(sourceInfo, e.ID()); ok {
-				start, end, hasRange := exprByteRange(fileContent, sourceInfo, declID)
+			// An expanded macro keeps the names it binds but not where they
+			// were written. The call the macro was written as holds the
+			// declarations, with ranges of their own.
+			for _, decl := range macroDeclarations(sourceInfo, e) {
+				start, end, hasRange := exprByteRange(fileContent, sourceInfo, decl.ID())
 				if hasRange && targetOffset >= start && targetOffset < end {
-					add(name, e.ID(), identifierKindTopLevel)
-				}
-				return
-			}
-			loopVar := e.AsComprehension().IterVar()
-			if start, end, found := findWord(fileContent, loopVar, byteStart); found {
-				if targetOffset >= start && targetOffset < end {
-					add(loopVar, e.ID(), identifierKindTopLevel)
+					add(decl.AsIdent(), e.ID(), identifierKindTopLevel)
 				}
 			}
 		}
@@ -198,33 +166,6 @@ func findIdentifierAtPosition(expr ast.Expr, sourceInfo *ast.SourceInfo, fileCon
 		return nil
 	}
 	best := candidates[len(candidates)-1]
-
-	// An identifier that is never selected from (no "name." anywhere) may be a
-	// loop variable whose comprehension the walk above didn't attribute it to.
-	// Re-point it at that comprehension so its scope comes out right.
-	if best.kind == identifierKindTopLevel && !strings.Contains(fileContent, "."+best.name) {
-		ast.PreOrderVisit(expr, ast.NewExprVisitor(func(e ast.Expr) {
-			if !comprehensionBinds(sourceInfo, e, best.name) {
-				return
-			}
-			offsetRange, hasOffset := sourceInfo.GetOffsetRange(e.ID())
-			if !hasOffset {
-				return
-			}
-			byteStart, byteStop := celOffsetRangeToByteRange(fileContent, offsetRange)
-			// An expanded macro can report an empty range; treat the offset as
-			// inside it as long as it comes after where the macro starts.
-			if byteStart == byteStop {
-				if targetOffset > byteStart {
-					best.exprID = e.ID()
-				}
-				return
-			}
-			if targetOffset >= byteStart && targetOffset < byteStop {
-				best.exprID = e.ID()
-			}
-		}))
-	}
 
 	return best
 }
@@ -254,69 +195,17 @@ func isSpaceByte(b byte) bool {
 	return b == ' ' || b == '\t' || b == '\n' || b == '\r'
 }
 
-// determineIdentifierScope figures out whether an identifier is top-level or a loop variable.
-func determineIdentifierScope(exprID int64, identName string, expr ast.Expr, sourceInfo *ast.SourceInfo) scope {
-	if s := findLoopVarScope(exprID, identName, expr, sourceInfo); s != nil {
-		return *s
+// determineIdentifierScope reports what the identifier at exprID refers to: a
+// name the comprehension at exprID declares, a name a comprehension binds, or
+// a name the environment declares.
+func determineIdentifierScope(exprID int64, expr ast.Expr) scope {
+	if e := findExprByID(expr, exprID); e != nil && e.Kind() == ast.ComprehensionKind {
+		return loopVarScope{comprehensionID: exprID}
+	}
+	if id, bound := nameBindings(expr)[exprID]; bound {
+		return loopVarScope{comprehensionID: id}
 	}
 	return topLevelScope{}
-}
-
-// findLoopVarScope reports the comprehension that binds identName as its loop
-// variable, when the identifier at exprID is that variable or one of its uses.
-// It returns nil when identName is not a loop variable.
-func findLoopVarScope(exprID int64, identName string, expr ast.Expr, sourceInfo *ast.SourceInfo) *loopVarScope {
-	var result *loopVarScope
-	ast.PreOrderVisit(expr, ast.NewExprVisitor(func(e ast.Expr) {
-		if result != nil {
-			return
-		}
-		switch e.Kind() {
-		case ast.ComprehensionKind:
-			// An expanded macro holds the name it binds as a name, not an
-			// expression, so the identifier was attributed to the
-			// comprehension itself.
-			if exprID == e.ID() && comprehensionBinds(sourceInfo, e, identName) {
-				result = &loopVarScope{comprehensionID: e.ID(), macroName: macroName(sourceInfo, e.ID())}
-			}
-
-		case ast.CallKind:
-			call := e.AsCall()
-			funcName := call.FunctionName()
-			if !isCELComprehensionMacro(funcName) || len(call.Args()) < 2 {
-				return
-			}
-			decl := call.Args()[0]
-			if decl.Kind() != ast.IdentKind || decl.AsIdent() != identName {
-				return
-			}
-			if decl.ID() == exprID || isUsedInComprehension(decl, call) {
-				result = &loopVarScope{comprehensionID: e.ID(), macroName: funcName}
-			}
-		}
-	}))
-	return result
-}
-
-// isUsedInComprehension checks if the loop variable appears within the comprehension call.
-func isUsedInComprehension(loopVarExpr ast.Expr, call ast.CallExpr) bool {
-	loopVarName := loopVarExpr.AsIdent()
-
-	// Check arguments 1+ (the actual expressions using the loop var)
-	for i := 1; i < len(call.Args()); i++ {
-		if containsIdentifier(call.Args()[i], loopVarName, loopVarExpr.ID()) {
-			return true
-		}
-	}
-
-	return false
-}
-
-// containsIdentifier reports whether the subtree rooted at expr holds the
-// identifier identName under the expression ID targetID.
-func containsIdentifier(expr ast.Expr, identName string, targetID int64) bool {
-	e := findExprByID(expr, targetID)
-	return e != nil && e.Kind() == ast.IdentKind && e.AsIdent() == identName
 }
 
 // validateNewName checks if the new name is a valid CEL identifier.

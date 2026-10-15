@@ -88,6 +88,70 @@ func TestDocumentHighlight(t *testing.T) {
 			description: "Highlight loop variable in exists ([1, 2, 3].exists(x, x == 2))",
 		},
 
+		// A loop variable shadowed by a nested macro's: each x is its own.
+		{
+			name:     "shadowed_outer_declaration",
+			file:     "testdata/document_highlight/shadowed_loop_var.cel",
+			position: protocol.Position{Line: 0, Character: 10},
+			expectedRanges: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 10}, End: protocol.Position{Line: 0, Character: 11}},
+				{Start: protocol.Position{Line: 0, Character: 13}, End: protocol.Position{Line: 0, Character: 14}},
+			},
+			writes: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 10}, End: protocol.Position{Line: 0, Character: 11}},
+			},
+			description: "The outer x in [[1]].map(x, x.map(x, x))",
+		},
+		{
+			name:     "shadowed_outer_use",
+			file:     "testdata/document_highlight/shadowed_loop_var.cel",
+			position: protocol.Position{Line: 0, Character: 13},
+			expectedRanges: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 10}, End: protocol.Position{Line: 0, Character: 11}},
+				{Start: protocol.Position{Line: 0, Character: 13}, End: protocol.Position{Line: 0, Character: 14}},
+			},
+			writes: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 10}, End: protocol.Position{Line: 0, Character: 11}},
+			},
+			description: "The outer x, from its use as the inner macro's receiver",
+		},
+		{
+			name:     "shadowed_inner_declaration",
+			file:     "testdata/document_highlight/shadowed_loop_var.cel",
+			position: protocol.Position{Line: 0, Character: 19},
+			expectedRanges: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 19}, End: protocol.Position{Line: 0, Character: 20}},
+				{Start: protocol.Position{Line: 0, Character: 22}, End: protocol.Position{Line: 0, Character: 23}},
+			},
+			writes: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 19}, End: protocol.Position{Line: 0, Character: 20}},
+			},
+			description: "The inner x in [[1]].map(x, x.map(x, x))",
+		},
+		{
+			name:     "variable_outside_loop",
+			file:     "testdata/document_highlight/loop_var_shadows_variable.cel",
+			position: protocol.Position{Line: 0, Character: 0},
+			expectedRanges: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 0}, End: protocol.Position{Line: 0, Character: 1}},
+				{Start: protocol.Position{Line: 0, Character: 14}, End: protocol.Position{Line: 0, Character: 15}},
+			},
+			description: "The variable x in x.map(x, x) + x, not the loop variable",
+		},
+		{
+			name:     "loop_var_shadows_variable",
+			file:     "testdata/document_highlight/loop_var_shadows_variable.cel",
+			position: protocol.Position{Line: 0, Character: 6},
+			expectedRanges: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 6}, End: protocol.Position{Line: 0, Character: 7}},
+				{Start: protocol.Position{Line: 0, Character: 9}, End: protocol.Position{Line: 0, Character: 10}},
+			},
+			writes: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 6}, End: protocol.Position{Line: 0, Character: 7}},
+			},
+			description: "The loop variable x in x.map(x, x) + x, not the variable",
+		},
+
 		// Emoji test - exact position validation
 		{
 			name:     "emoji_context",

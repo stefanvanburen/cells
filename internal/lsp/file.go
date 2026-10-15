@@ -142,8 +142,8 @@ func variableOrNil(celEnv *cel.Env, nativeAST *celast.AST, info *identifierInfo)
 	if info.kind != identifierKindTopLevel {
 		return nativeAST, info
 	}
-	root, sourceInfo := nativeAST.Expr(), nativeAST.SourceInfo()
-	if _, isLoopVar := determineIdentifierScope(info.exprID, info.name, root, sourceInfo).(loopVarScope); isLoopVar {
+	root := nativeAST.Expr()
+	if _, isLoopVar := determineIdentifierScope(info.exprID, root).(loopVarScope); isLoopVar {
 		return nativeAST, info
 	}
 
@@ -187,6 +187,6 @@ func (f *file) identifierOccurrencesAt(celEnv *cel.Env, pos protocol.Position) (
 	if info == nil {
 		return nil, nil
 	}
-	s := determineIdentifierScope(info.exprID, info.name, nativeAST.Expr(), nativeAST.SourceInfo())
+	s := determineIdentifierScope(info.exprID, nativeAST.Expr())
 	return info, identifierOccurrences(nativeAST.Expr(), nativeAST.SourceInfo(), f.content, s, info.name)
 }

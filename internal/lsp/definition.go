@@ -68,7 +68,7 @@ func computeDefinition(f *file, celEnv *cel.Env, configPath string, pos protocol
 // binds it, since a macro names what it binds before any use of it.
 func macroBindingLocation(f *file, nativeAST *celast.AST, info *identifierInfo) (protocol.Location, bool) {
 	sourceInfo := nativeAST.SourceInfo()
-	s := determineIdentifierScope(info.exprID, info.name, nativeAST.Expr(), sourceInfo)
+	s := determineIdentifierScope(info.exprID, nativeAST.Expr())
 	if _, bound := s.(loopVarScope); !bound {
 		return protocol.Location{}, false
 	}

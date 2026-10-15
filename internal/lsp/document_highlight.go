@@ -27,7 +27,7 @@ func computeDocumentHighlight(f *file, celEnv *cel.Env, params protocol.Document
 		return nil, nil
 	}
 	sourceInfo := nativeAST.SourceInfo()
-	s := determineIdentifierScope(info.exprID, info.name, nativeAST.Expr(), sourceInfo)
+	s := determineIdentifierScope(info.exprID, nativeAST.Expr())
 	ranges := identifierOccurrences(nativeAST.Expr(), sourceInfo, f.content, s, info.name)
 	if len(ranges) == 0 {
 		return nil, nil

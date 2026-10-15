@@ -1,6 +1,8 @@
 package lsp
 
 import (
+	"maps"
+
 	"cel.dev/cel-go/common/ast"
 	"go.lsp.dev/protocol"
 )
@@ -42,58 +44,102 @@ func exprByteRange(content string, sourceInfo *ast.SourceInfo, id int64) (byteSt
 	return byteStart, byteEnd, true
 }
 
-// macroDeclarationRange returns the range of the name a macro binds.
+// macroDeclarations returns the identifiers that declare the names an expanded
+// macro binds: the x in [1, 2].map(x, x * 2), the k and v in m.all(k, v, v > 0),
+// or the v in cel.bind(v, 1, v + v).
 //
-// Expanding a macro drops the declaration: [1, 2].map(x, ...) becomes a
-// comprehension that knows the name x but holds no expression for where it was
-// written. What the parser keeps is the call the macro was written as, whose
-// first argument is that declaration, with its own source range.
-func macroDeclaration(sourceInfo *ast.SourceInfo, macroID int64) (name string, declID int64, ok bool) {
-	call, retained := sourceInfo.GetMacroCall(macroID)
-	if !retained || call.Kind() != ast.CallKind {
-		return "", 0, false
+// Expanding a macro drops its declarations, leaving a comprehension that knows
+// the names but holds no expression for where they were written. What the
+// parser keeps is the call the macro was written as, whose leading arguments
+// are those declarations, with source ranges of their own.
+func macroDeclarations(sourceInfo *ast.SourceInfo, comp ast.Expr) []ast.Expr {
+	call, retained := sourceInfo.GetMacroCall(comp.ID())
+	if comp.Kind() != ast.ComprehensionKind || !retained || call.Kind() != ast.CallKind {
+		return nil
+	}
+	c := comp.AsComprehension()
+	declared := 1
+	if c.HasIterVar2() {
+		declared = 2
 	}
 	args := call.AsCall().Args()
-	if len(args) == 0 || args[0].Kind() != ast.IdentKind {
-		return "", 0, false
+	var decls []ast.Expr
+	for _, arg := range args[:min(declared, len(args))] {
+		if arg.Kind() != ast.IdentKind {
+			continue
+		}
+		switch arg.AsIdent() {
+		case c.IterVar(), c.IterVar2(), c.AccuVar():
+			decls = append(decls, arg)
+		}
 	}
-	return args[0].AsIdent(), args[0].ID(), true
+	return decls
 }
 
-// macroDeclarationRange returns the range of the declaration of identName in
-// the macro with the given ID.
-func macroDeclarationRange(sourceInfo *ast.SourceInfo, content string, macroID int64, identName string) (protocol.Range, bool) {
-	name, declID, ok := macroDeclaration(sourceInfo, macroID)
-	if !ok || name != identName {
-		return protocol.Range{}, false
-	}
-	return rangeOfExpr(content, sourceInfo, declID)
-}
-
-// comprehensionBinds reports whether an expanded macro binds identName.
+// nameBindings maps each identifier in the expression rooted at root that a
+// comprehension binds to that comprehension's ID. An identifier it leaves out
+// names something the environment declares.
 //
-// A comprehension names its iteration variable directly, but cel.bind does not
-// — it binds through the accumulator and leaves IterVar as a placeholder — so
-// the call the macro was written as has the last word.
-func comprehensionBinds(sourceInfo *ast.SourceInfo, expr ast.Expr, identName string) bool {
-	if expr.Kind() != ast.ComprehensionKind {
-		return false
+// A comprehension evaluates its range and initial accumulator outside itself,
+// its condition and step with its iteration variables and accumulator bound,
+// and its result with only the accumulator bound. cel.bind binds its name as
+// the accumulator. An inner binding of a name shadows an outer one.
+func nameBindings(root ast.Expr) map[int64]int64 {
+	bindings := make(map[int64]int64)
+	var walk func(e ast.Expr, scope map[string]int64)
+	walk = func(e ast.Expr, scope map[string]int64) {
+		switch e.Kind() {
+		case ast.IdentKind:
+			if id, bound := scope[e.AsIdent()]; bound {
+				bindings[e.ID()] = id
+			}
+		case ast.SelectKind:
+			walk(e.AsSelect().Operand(), scope)
+		case ast.CallKind:
+			call := e.AsCall()
+			if call.IsMemberFunction() {
+				walk(call.Target(), scope)
+			}
+			for _, arg := range call.Args() {
+				walk(arg, scope)
+			}
+		case ast.ListKind:
+			for _, elem := range e.AsList().Elements() {
+				walk(elem, scope)
+			}
+		case ast.MapKind:
+			for _, entry := range e.AsMap().Entries() {
+				walk(entry.AsMapEntry().Key(), scope)
+				walk(entry.AsMapEntry().Value(), scope)
+			}
+		case ast.StructKind:
+			for _, field := range e.AsStruct().Fields() {
+				walk(field.AsStructField().Value(), scope)
+			}
+		case ast.ComprehensionKind:
+			c := e.AsComprehension()
+			walk(c.IterRange(), scope)
+			walk(c.AccuInit(), scope)
+			withAccu := bind(scope, e.ID(), c.AccuVar())
+			inLoop := bind(withAccu, e.ID(), c.IterVar(), c.IterVar2())
+			walk(c.LoopCondition(), inLoop)
+			walk(c.LoopStep(), inLoop)
+			walk(c.Result(), withAccu)
+		}
 	}
-	if expr.AsComprehension().IterVar() == identName {
-		return true
-	}
-	name, _, ok := macroDeclaration(sourceInfo, expr.ID())
-	return ok && name == identName
+	walk(root, map[string]int64{})
+	return bindings
 }
 
-// macroName returns the name of the macro an expanded comprehension came from,
-// or "" when the parser did not retain the call.
-func macroName(sourceInfo *ast.SourceInfo, macroID int64) string {
-	call, ok := sourceInfo.GetMacroCall(macroID)
-	if !ok || call.Kind() != ast.CallKind {
-		return ""
+// bind returns scope with names bound to the comprehension with the given ID.
+func bind(scope map[string]int64, id int64, names ...string) map[string]int64 {
+	inner := maps.Clone(scope)
+	for _, name := range names {
+		if name != "" {
+			inner[name] = id
+		}
 	}
-	return call.AsCall().FunctionName()
+	return inner
 }
 
 // findExprByID returns the expression with the given ID, or nil if the subtree
@@ -108,105 +154,42 @@ func findExprByID(expr ast.Expr, targetID int64) ast.Expr {
 	return found
 }
 
-// identifierRanges returns the range of every reference to identName within
-// the subtree rooted at expr.
-func identifierRanges(expr ast.Expr, sourceInfo *ast.SourceInfo, content string, identName string) []protocol.Range {
+// identifierOccurrences returns the range of every occurrence of identName
+// within the scope it belongs to: the identifiers that name what the
+// environment declares, or a comprehension's declaration of the name and the
+// identifiers it binds.
+//
+// References, document highlights and renames all act on exactly this set of
+// ranges, and share this function so that the three cannot disagree about what
+// a name refers to.
+func identifierOccurrences(expr ast.Expr, sourceInfo *ast.SourceInfo, content string, s scope, identName string) []protocol.Range {
+	var binder int64
 	var ranges []protocol.Range
+	if sc, ok := s.(loopVarScope); ok {
+		binder = sc.comprehensionID
+		comp := findExprByID(expr, binder)
+		if comp == nil {
+			return nil
+		}
+		for _, decl := range macroDeclarations(sourceInfo, comp) {
+			if decl.AsIdent() != identName {
+				continue
+			}
+			if r, ok := rangeOfExpr(content, sourceInfo, decl.ID()); ok {
+				ranges = append(ranges, r)
+			}
+		}
+	}
+
+	bindings := nameBindings(expr)
 	ast.PreOrderVisit(expr, ast.NewExprVisitor(func(e ast.Expr) {
-		if e.Kind() != ast.IdentKind || e.AsIdent() != identName {
+		if e.Kind() != ast.IdentKind || e.AsIdent() != identName || bindings[e.ID()] != binder {
 			return
 		}
 		if r, ok := rangeOfExpr(content, sourceInfo, e.ID()); ok {
 			ranges = append(ranges, r)
 		}
 	}))
-	return ranges
-}
-
-// identifierOccurrences returns the range of every occurrence of identName
-// within the scope it belongs to: the whole expression for a top-level
-// identifier, or just the enclosing comprehension for a loop variable.
-//
-// References, document highlights and renames all act on exactly this set of
-// ranges, and share this function so that the three cannot disagree about what
-// a name refers to.
-func identifierOccurrences(expr ast.Expr, sourceInfo *ast.SourceInfo, content string, s scope, identName string) []protocol.Range {
-	sc, ok := s.(loopVarScope)
-	if !ok {
-		// topLevelScope: the identifier refers to the same thing everywhere.
-		return identifierRanges(expr, sourceInfo, content, identName)
-	}
-
-	comp := findExprByID(expr, sc.comprehensionID)
-	if comp == nil {
-		return nil
-	}
-	// A macro the parser left in call form, e.g. list.map(x, x * 2), keeps the
-	// loop variable as the call's first argument. An expanded macro is a
-	// ComprehensionKind, whose iteration variable is not an expression at all.
-	if comp.Kind() == ast.CallKind {
-		return macroCallOccurrences(comp.AsCall(), sourceInfo, content, identName)
-	}
-	if comp.Kind() == ast.ComprehensionKind {
-		return comprehensionOccurrences(comp, sourceInfo, content, identName)
-	}
-	return nil
-}
-
-// macroCallOccurrences returns the occurrences of identName within an
-// unexpanded macro call, whose first argument declares the loop variable.
-func macroCallOccurrences(call ast.CallExpr, sourceInfo *ast.SourceInfo, content string, identName string) []protocol.Range {
-	args := call.Args()
-	if len(args) < 2 {
-		return nil
-	}
-
-	var ranges []protocol.Range
-	// The declaration itself, e.g. the "x" in .map(x, ...).
-	if decl := args[0]; decl.Kind() == ast.IdentKind && decl.AsIdent() == identName {
-		if r, ok := rangeOfExpr(content, sourceInfo, decl.ID()); ok {
-			ranges = append(ranges, r)
-		}
-	}
-	// Every use of it in the macro body.
-	for _, arg := range args[1:] {
-		ranges = append(ranges, identifierRanges(arg, sourceInfo, content, identName)...)
-	}
-	return ranges
-}
-
-// comprehensionOccurrences returns the occurrences of identName within an
-// expanded macro.
-func comprehensionOccurrences(expr ast.Expr, sourceInfo *ast.SourceInfo, content string, identName string) []protocol.Range {
-	comp := expr.AsComprehension()
-
-	var ranges []protocol.Range
-	// The declaration, which the expansion dropped.
-	if decl, ok := macroDeclarationRange(sourceInfo, content, expr.ID(), identName); ok {
-		ranges = append(ranges, decl)
-	} else if comp.IterVar() == identName {
-		// No call was retained — macro call tracking can be off in an
-		// environment cells did not build. Fall back to the source text, where
-		// the declaration is the first word-delimited occurrence of the name
-		// after the range being iterated over.
-		var searchFrom int
-		if iterRange, ok := sourceInfo.GetOffsetRange(comp.IterRange().ID()); ok {
-			_, searchFrom = celOffsetRangeToByteRange(content, iterRange)
-		}
-		if start, end, ok := findWord(content, identName, searchFrom); ok {
-			ranges = append(ranges, lspRange(content, start, end))
-		}
-	}
-
-	for _, sub := range []ast.Expr{
-		comp.IterRange(),
-		comp.AccuInit(),
-		comp.LoopCondition(),
-		comp.LoopStep(),
-		comp.Result(),
-	} {
-		ranges = append(ranges, identifierRanges(sub, sourceInfo, content, identName)...)
-	}
 	return ranges
 }
 
