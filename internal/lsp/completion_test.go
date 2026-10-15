@@ -275,7 +275,7 @@ func TestCompletionInvoked(t *testing.T) {
 
 // --- Operator-context completion ---
 
-func TestCompletionAfterOperator(t *testing.T) {
+func TestCompletionAfterToken(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -283,6 +283,8 @@ func TestCompletionAfterOperator(t *testing.T) {
 		file        string
 		wantPresent []string
 		wantAbsent  []string
+		// wantNone is set where nothing cells offers can come next.
+		wantNone bool
 	}{
 		{
 			name: "int plus",
@@ -305,6 +307,22 @@ func TestCompletionAfterOperator(t *testing.T) {
 			wantPresent: []string{"bool", "true", "false"},
 			wantAbsent:  []string{"int", "size", "string", "timestamp", "duration", "null"},
 		},
+		{
+			name:        "in",
+			file:        "testdata/completion/after_in.cel",
+			wantPresent: []string{"size", "true"},
+		},
+		{
+			name:        "name being typed",
+			file:        "testdata/completion/partial_name.cel",
+			wantPresent: []string{"timestamp"},
+		},
+		// After a complete operand only an operator can come.
+		{name: "string", file: "testdata/completion/after_string.cel", wantNone: true},
+		{name: "call", file: "testdata/completion/after_call.cel", wantNone: true},
+		{name: "list", file: "testdata/completion/after_list.cel", wantNone: true},
+		{name: "name and space", file: "testdata/completion/after_name.cel", wantNone: true},
+		{name: "keyword and space", file: "testdata/completion/after_keyword.cel", wantNone: true},
 	}
 
 	for _, tt := range tests {
@@ -317,6 +335,9 @@ func TestCompletionAfterOperator(t *testing.T) {
 			}
 			for _, absent := range tt.wantAbsent {
 				ok.True(t, !containsLabel(result.Items, absent))
+			}
+			if tt.wantNone {
+				ok.Equal(t, completionLabels(result.Items), []string{})
 			}
 		})
 	}

@@ -11,6 +11,7 @@ import (
 	"cel.dev/cel-go/common/decls"
 	"cel.dev/cel-go/common/operators"
 	"cel.dev/cel-go/common/types"
+	"cel.dev/cel-go/parser/gen"
 	"go.lsp.dev/protocol"
 )
 
@@ -32,6 +33,12 @@ func (s *server) Completion(ctx context.Context, params *protocol.CompletionPara
 		items := fieldCompletionItems(docEnv, receiverType)
 		items = append(items, memberCompletionItems(docEnv.celEnv, receiverType)...)
 		return s.completionList(items), nil
+	}
+
+	// After a complete operand only an operator can come, and cells offers
+	// none.
+	if f != nil && endsOperand(f.content, params.Position) {
+		return s.completionList(nil), nil
 	}
 
 	// Check for operator context to filter by expected type.
@@ -90,6 +97,34 @@ func signatureLabelDetails(o *decls.OverloadDecl) *protocol.CompletionItemLabelD
 func isDotContext(content string, pos protocol.Position) bool {
 	offset := lineColToByteOffset(content, pos.Line, pos.Character)
 	return offset > 0 && offset <= len(content) && content[offset-1] == '.'
+}
+
+// endsOperand reports whether the source before pos ends with a complete
+// operand, such as a literal, a closing bracket, or a name followed by
+// whitespace. A name that runs up to pos is one still being typed, which
+// completion is there to finish.
+func endsOperand(content string, pos protocol.Position) bool {
+	offset := lineColToByteOffset(content, pos.Line, pos.Character)
+	if offset < 0 || offset > len(content) {
+		return false
+	}
+	tokens := lexCEL(content[:offset])
+	for _, tok := range slices.Backward(tokens) {
+		switch tok.kind {
+		case gen.CELLexerCOMMENT:
+			continue
+		case gen.CELLexerSTRING, gen.CELLexerBYTES,
+			gen.CELLexerNUM_INT, gen.CELLexerNUM_UINT, gen.CELLexerNUM_FLOAT,
+			gen.CELLexerESC_IDENTIFIER,
+			gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
+			return true
+		case gen.CELLexerIDENTIFIER, gen.CELLexerCEL_TRUE, gen.CELLexerCEL_FALSE, gen.CELLexerNUL:
+			return tok.end < offset
+		default:
+			return false
+		}
+	}
+	return false
 }
 
 // receiverTypeAtDot extracts the expression before the dot at the given cursor
