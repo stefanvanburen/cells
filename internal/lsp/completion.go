@@ -27,9 +27,21 @@ func (s *server) Completion(ctx context.Context, params *protocol.CompletionPara
 		return &protocol.CompletionList{}, nil
 	}
 
-	// Dot context: member completions filtered by receiver type.
-	if f != nil && isDotContext(f.content, params.Position) {
-		receiverType := receiverTypeAtDot(f.content, params.Position, docEnv.celEnv)
+	var tokens []celToken
+	var offset int
+	if f != nil {
+		offset = lineColToByteOffset(f.content, params.Position.Line, params.Position.Character)
+		offset = max(0, min(offset, len(f.content)))
+		var completable bool
+		tokens, completable = tokensBefore(f.content, offset)
+		if !completable {
+			return s.completionList(nil), nil
+		}
+	}
+
+	// Member completions, filtered by the receiver's type.
+	if dot, ok := memberDot(tokens, offset); ok {
+		receiverType := receiverTypeBefore(f.content[:dot], docEnv.celEnv)
 		items := fieldCompletionItems(docEnv, receiverType)
 		items = append(items, memberCompletionItems(docEnv.celEnv, receiverType)...)
 		return s.completionList(items), nil
@@ -37,7 +49,7 @@ func (s *server) Completion(ctx context.Context, params *protocol.CompletionPara
 
 	// After a complete operand only an operator can come, and cells offers
 	// none.
-	if f != nil && endsOperand(f.content, params.Position) {
+	if endsOperand(tokens, offset) {
 		return s.completionList(nil), nil
 	}
 
@@ -90,53 +102,63 @@ func signatureLabelDetails(o *decls.OverloadDecl) *protocol.CompletionItemLabelD
 	return details
 }
 
-// isDotContext returns true if the character immediately before the cursor
-// position is a dot. This allows member completions to work regardless of
-// whether the completion was triggered by typing '.' or by an explicit
-// invocation (e.g. Ctrl+Space).
-func isDotContext(content string, pos protocol.Position) bool {
-	offset := lineColToByteOffset(content, pos.Line, pos.Character)
-	return offset > 0 && offset <= len(content) && content[offset-1] == '.'
+// tokensBefore returns the tokens before offset, leaving out comments. It
+// reports false where there is nothing to complete: inside a comment, or after
+// text the lexer makes no token of, which is a string or bytes literal still
+// being typed.
+func tokensBefore(content string, offset int) (tokens []celToken, completable bool) {
+	tokens = lexCEL(content[:offset])
+	end := 0
+	if len(tokens) > 0 {
+		last := tokens[len(tokens)-1]
+		if last.kind == gen.CELLexerCOMMENT && last.end == offset {
+			return nil, false
+		}
+		end = last.end
+	}
+	if strings.TrimSpace(content[end:offset]) != "" {
+		return nil, false
+	}
+	tokens = slices.DeleteFunc(tokens, func(tok celToken) bool { return tok.kind == gen.CELLexerCOMMENT })
+	return tokens, true
 }
 
-// endsOperand reports whether the source before pos ends with a complete
-// operand, such as a literal, a closing bracket, or a name followed by
-// whitespace. A name that runs up to pos is one still being typed, which
-// completion is there to finish.
-func endsOperand(content string, pos protocol.Position) bool {
-	offset := lineColToByteOffset(content, pos.Line, pos.Character)
-	if offset < 0 || offset > len(content) {
+// memberDot returns the byte offset of the dot a member is being completed
+// after, which is the last token before offset, or the one before a name being
+// typed up to offset.
+func memberDot(tokens []celToken, offset int) (int, bool) {
+	if n := len(tokens); n > 0 && tokens[n-1].kind == gen.CELLexerIDENTIFIER && tokens[n-1].end == offset {
+		tokens = tokens[:n-1]
+	}
+	if n := len(tokens); n > 0 && tokens[n-1].kind == gen.CELLexerDOT {
+		return tokens[n-1].start, true
+	}
+	return 0, false
+}
+
+// endsOperand reports whether tokens end with a complete operand, such as a
+// literal, a closing bracket, or a name followed by whitespace. A name that
+// runs up to offset is one still being typed, which completion is there to
+// finish.
+func endsOperand(tokens []celToken, offset int) bool {
+	if len(tokens) == 0 {
 		return false
 	}
-	tokens := lexCEL(content[:offset])
-	for _, tok := range slices.Backward(tokens) {
-		switch tok.kind {
-		case gen.CELLexerCOMMENT:
-			continue
-		case gen.CELLexerSTRING, gen.CELLexerBYTES,
-			gen.CELLexerNUM_INT, gen.CELLexerNUM_UINT, gen.CELLexerNUM_FLOAT,
-			gen.CELLexerESC_IDENTIFIER,
-			gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
-			return true
-		case gen.CELLexerIDENTIFIER, gen.CELLexerCEL_TRUE, gen.CELLexerCEL_FALSE, gen.CELLexerNUL:
-			return tok.end < offset
-		default:
-			return false
-		}
+	switch last := tokens[len(tokens)-1]; last.kind {
+	case gen.CELLexerSTRING, gen.CELLexerBYTES,
+		gen.CELLexerNUM_INT, gen.CELLexerNUM_UINT, gen.CELLexerNUM_FLOAT,
+		gen.CELLexerESC_IDENTIFIER,
+		gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
+		return true
+	case gen.CELLexerIDENTIFIER, gen.CELLexerCEL_TRUE, gen.CELLexerCEL_FALSE, gen.CELLexerNUL:
+		return last.end < offset
 	}
 	return false
 }
 
-// receiverTypeAtDot extracts the expression before the dot at the given cursor
-// position and tries to compile it to determine its type. Returns nil if the
-// type cannot be determined.
-func receiverTypeAtDot(content string, pos protocol.Position, celEnv *cel.Env) *types.Type {
-	offset := lineColToByteOffset(content, pos.Line, pos.Character)
-	if offset <= 0 || offset > len(content) {
-		return nil
-	}
-
-	before := content[:offset-1]
+// receiverTypeBefore compiles the source before a member's dot to find the
+// type of the receiver, or returns nil if it does not compile.
+func receiverTypeBefore(before string, celEnv *cel.Env) *types.Type {
 	before = strings.TrimRight(before, " \t\r\n")
 	if before == "" {
 		return nil

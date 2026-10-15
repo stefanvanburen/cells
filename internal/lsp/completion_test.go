@@ -317,6 +317,17 @@ func TestCompletionAfterToken(t *testing.T) {
 			file:        "testdata/completion/partial_name.cel",
 			wantPresent: []string{"timestamp"},
 		},
+		{
+			name:        "method being typed",
+			file:        "testdata/completion/partial_method.cel",
+			wantPresent: []string{"contains", "startsWith"},
+			wantAbsent:  []string{"timestamp", "int", "getFullYear"},
+		},
+		// Nothing completes inside a literal or a comment.
+		{name: "in string", file: "testdata/completion/in_string.cel", wantNone: true},
+		{name: "in string argument", file: "testdata/completion/in_string_argument.cel", wantNone: true},
+		{name: "in bytes", file: "testdata/completion/in_bytes.cel", wantNone: true},
+		{name: "in comment", file: "testdata/completion/in_comment.cel", wantNone: true},
 		// After a complete operand only an operator can come.
 		{name: "string", file: "testdata/completion/after_string.cel", wantNone: true},
 		{name: "call", file: "testdata/completion/after_call.cel", wantNone: true},
