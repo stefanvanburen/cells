@@ -91,11 +91,13 @@ func typeLabelDetails(t *types.Type) *protocol.CompletionItemLabelDetails {
 	return &protocol.CompletionItemLabelDetails{Description: new(t.String())}
 }
 
-// signatureLabelDetails is the labelDetails of a function's overload: its
-// parameters and result, which the client shows directly after the function's
-// name, and a member function's receiver type, which it shows apart.
-func signatureLabelDetails(o *decls.OverloadDecl) *protocol.CompletionItemLabelDetails {
-	details := &protocol.CompletionItemLabelDetails{Detail: new(formatOverloadParams(o))}
+// signatureLabelDetails is the labelDetails of a function with the given
+// overloads: the first's parameters and result and how many others there are,
+// which the client shows directly after the function's name, and a member
+// function's receiver type, which it shows apart.
+func signatureLabelDetails(overloads []*decls.OverloadDecl) *protocol.CompletionItemLabelDetails {
+	o := overloads[0]
+	details := &protocol.CompletionItemLabelDetails{Detail: new(formatOverloadParams(o) + moreOverloads(overloads))}
 	if args := o.ArgTypes(); o.IsMemberFunction() && len(args) > 0 {
 		details.Description = new(args[0].String())
 	}
@@ -314,8 +316,8 @@ func memberCompletionItems(celEnv *cel.Env, receiverType *types.Type) []protocol
 		items = append(items, protocol.CompletionItem{
 			Label:            name,
 			Kind:             protocol.CompletionItemKindMethod,
-			LabelDetails:     signatureLabelDetails(matchingOverloads[0]),
-			Detail:           protocol.NewOptional(formatOverloadSignature(fn.Name(), matchingOverloads[0])),
+			LabelDetails:     signatureLabelDetails(matchingOverloads),
+			Detail:           protocol.NewOptional(formatOverloadSignature(fn.Name(), matchingOverloads[0]) + moreOverloads(matchingOverloads)),
 			Documentation:    docString(fn.Description()),
 			InsertText:       protocol.NewOptional(name + "($1)"),
 			InsertTextFormat: protocol.InsertTextFormatSnippet,
@@ -393,26 +395,21 @@ func globalCompletionItems(celEnv *cel.Env, expectedType *types.Type) []protocol
 			continue
 		}
 
-		hasMatchingGlobal := false
+		var matchingOverloads []*decls.OverloadDecl
 		for _, o := range fn.OverloadDecls() {
-			if o.IsMemberFunction() {
-				continue
-			}
-			if typeMatches(expectedType, o.ResultType()) {
-				hasMatchingGlobal = true
-				break
+			if !o.IsMemberFunction() && typeMatches(expectedType, o.ResultType()) {
+				matchingOverloads = append(matchingOverloads, o)
 			}
 		}
-		if !hasMatchingGlobal {
+		if len(matchingOverloads) == 0 {
 			continue
 		}
 
-		overload := firstGlobalOverload(fn)
 		items = append(items, protocol.CompletionItem{
 			Label:            name,
-			LabelDetails:     signatureLabelDetails(overload),
+			LabelDetails:     signatureLabelDetails(matchingOverloads),
 			Kind:             protocol.CompletionItemKindFunction,
-			Detail:           protocol.NewOptional(formatOverloadSignature(fn.Name(), overload)),
+			Detail:           protocol.NewOptional(formatOverloadSignature(fn.Name(), matchingOverloads[0]) + moreOverloads(matchingOverloads)),
 			Documentation:    docString(fn.Description()),
 			InsertText:       protocol.NewOptional(name + "($1)"),
 			InsertTextFormat: protocol.InsertTextFormatSnippet,
@@ -485,15 +482,13 @@ func isOperatorOrInternal(name string) bool {
 	return strings.HasPrefix(name, "@") || strings.HasPrefix(name, "_")
 }
 
-// firstGlobalOverload returns the first of fn's overloads that is not a
-// member function.
-func firstGlobalOverload(fn *decls.FunctionDecl) *decls.OverloadDecl {
-	for _, o := range fn.OverloadDecls() {
-		if !o.IsMemberFunction() {
-			return o
-		}
+// moreOverloads notes how many overloads there are besides the first one a
+// completion item shows, if any.
+func moreOverloads(overloads []*decls.OverloadDecl) string {
+	if len(overloads) <= 1 {
+		return ""
 	}
-	return nil
+	return fmt.Sprintf(", +%d more", len(overloads)-1)
 }
 
 // formatOverloadSignature formats a single overload as "name(arg1, arg2) -> result"

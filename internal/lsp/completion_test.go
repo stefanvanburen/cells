@@ -382,7 +382,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantSnippet:    true,
 			wantInsertText: "int($1)",
 			wantDoc:        true,
-			wantAfterLabel: "(int) -> int",
+			wantAfterLabel: "(int) -> int, +5 more",
 		},
 		{
 			name:           "member method contains",
@@ -405,7 +405,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantSnippet:    true,
 			wantInsertText: "getFullYear($1)",
 			wantDoc:        true,
-			wantAfterLabel: "() -> int",
+			wantAfterLabel: "() -> int, +1 more",
 			wantLabelDesc:  "google.protobuf.Timestamp",
 		},
 		{
@@ -457,7 +457,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantSnippet:    true,
 			wantInsertText: "size($1)",
 			wantDoc:        true,
-			wantAfterLabel: "(bytes) -> int",
+			wantAfterLabel: "(bytes) -> int, +3 more",
 		},
 		{
 			name:           "matches as member on string",
@@ -479,7 +479,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantSnippet:    true,
 			wantInsertText: "duration($1)",
 			wantDoc:        true,
-			wantAfterLabel: "(google.protobuf.Duration) -> google.protobuf.Duration",
+			wantAfterLabel: "(google.protobuf.Duration) -> google.protobuf.Duration, +1 more",
 		},
 		{
 			name:           "type conversion timestamp",
@@ -489,7 +489,7 @@ func TestCompletionItemProperties(t *testing.T) {
 			wantSnippet:    true,
 			wantInsertText: "timestamp($1)",
 			wantDoc:        true,
-			wantAfterLabel: "(google.protobuf.Timestamp) -> google.protobuf.Timestamp",
+			wantAfterLabel: "(google.protobuf.Timestamp) -> google.protobuf.Timestamp, +2 more",
 		},
 	}
 
