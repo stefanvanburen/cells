@@ -42,7 +42,7 @@ func (s *server) Completion(ctx context.Context, params *protocol.CompletionPara
 
 	// Member completions, filtered by the receiver's type.
 	if dot, ok := memberDot(tokens, offset); ok {
-		receiverType := receiverTypeBefore(f.content[:dot], docEnv.celEnv)
+		receiverType := receiverType(f.content, tokens[:dot], docEnv.celEnv)
 		items := fieldCompletionItems(docEnv, receiverType)
 		items = append(items, memberCompletionItems(docEnv.celEnv, receiverType)...)
 		return s.completionList(items), nil
@@ -132,15 +132,15 @@ func tokensBefore(content string, offset int) (tokens []celToken, completable bo
 	return tokens, true
 }
 
-// memberDot returns the byte offset of the dot a member is being completed
-// after, which is the last token before offset, or the one before a name being
-// typed up to offset.
+// memberDot returns the index of the dot a member is being completed after,
+// which is the last token before offset, or the one before a name being typed
+// up to offset.
 func memberDot(tokens []celToken, offset int) (int, bool) {
 	if n := len(tokens); n > 0 && tokens[n-1].kind == gen.CELLexerIDENTIFIER && tokens[n-1].end == offset {
 		tokens = tokens[:n-1]
 	}
 	if n := len(tokens); n > 0 && tokens[n-1].kind == gen.CELLexerDOT {
-		return tokens[n-1].start, true
+		return n - 1, true
 	}
 	return 0, false
 }
@@ -172,39 +172,20 @@ const completionPlaceholder = "cells_completion_placeholder"
 // boundNamesAt returns the names macros bind at the end of before, the source
 // up to the cursor, each mapped to the name of the macro that binds it.
 //
-// The source is rarely whole while it is being typed, so what is parsed is
-// before with a placeholder name at the end if none is being typed there, and
-// with the brackets it leaves open closed, failing which, with the
-// conditional it may have left open given an alternative as well. Where
-// neither parses, there are no names to offer.
+// What is parsed is before with a placeholder name at the end if none is being
+// typed there, made whole by [wholeSources]. Where that does not parse, there
+// are no names to offer.
 func boundNamesAt(before string, tokens []celToken, celEnv *cel.Env) map[string]string {
 	src := before
 	if n := len(tokens); n == 0 || tokens[n-1].kind != gen.CELLexerIDENTIFIER || tokens[n-1].end != len(before) {
 		src += completionPlaceholder
 	}
 	nameEnd := len(src)
-	var open []int
-	for _, tok := range tokens {
-		switch tok.kind {
-		case gen.CELLexerLPAREN, gen.CELLexerLBRACKET, gen.CELLexerLBRACE:
-			open = append(open, tok.kind)
-		case gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
-			if len(open) > 0 {
-				open = open[:len(open)-1]
-			}
-		}
-	}
-	closers := map[int]string{gen.CELLexerLPAREN: ")", gen.CELLexerLBRACKET: "]", gen.CELLexerLBRACE: "}"}
-	var b strings.Builder
-	for _, kind := range slices.Backward(open) {
-		b.WriteString(closers[kind])
-	}
-	closing := b.String()
 
 	var parsed *cel.Ast
-	for _, alternative := range []string{"", " : " + completionPlaceholder} {
-		if p, iss := celEnv.Parse(src + alternative + closing); iss.Err() == nil {
-			parsed, src = p, src+alternative+closing
+	for _, whole := range wholeSources(src, tokens, completionPlaceholder) {
+		if p, iss := celEnv.Parse(whole); iss.Err() == nil {
+			parsed, src = p, whole
 			break
 		}
 	}
@@ -256,19 +237,101 @@ func boundCompletionItems(bound map[string]string) []protocol.CompletionItem {
 	return items
 }
 
-// receiverTypeBefore compiles the source before a member's dot to find the
-// type of the receiver, or returns nil if it does not compile.
-func receiverTypeBefore(before string, celEnv *cel.Env) *types.Type {
-	before = strings.TrimRight(before, " \t\r\n")
-	if before == "" {
-		return nil
+// wholeSources returns ways to make src, which tokens lead up to, a whole
+// expression, since the source is rarely whole while it is being typed: src
+// with the brackets tokens leave open closed, and the same with alternative
+// after src as well, for a conditional they leave open.
+func wholeSources(src string, tokens []celToken, alternative string) []string {
+	var open []int
+	for _, tok := range tokens {
+		switch tok.kind {
+		case gen.CELLexerLPAREN, gen.CELLexerLBRACKET, gen.CELLexerLBRACE:
+			open = append(open, tok.kind)
+		case gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
+			if len(open) > 0 {
+				open = open[:len(open)-1]
+			}
+		}
 	}
+	closers := map[int]string{gen.CELLexerLPAREN: ")", gen.CELLexerLBRACKET: "]", gen.CELLexerLBRACE: "}"}
+	var b strings.Builder
+	for _, kind := range slices.Backward(open) {
+		b.WriteString(closers[kind])
+	}
+	closing := b.String()
+	return []string{src + closing, src + " : " + alternative + closing}
+}
 
-	ast, iss := celEnv.Compile(before)
-	if iss.Err() != nil {
+// receiverType returns the type of the receiver a member is being completed
+// on, which tokens, the tokens of content before the member's dot, end with.
+// It returns nil if the type cannot be determined.
+//
+// What is type-checked is the source before the dot made whole by
+// [wholeSources]. The parser records each expression at one token of its own,
+// so the receiver is the outermost expression recorded at its anchor. It
+// records nothing at the parenthesis of a grouping, so a receiver in
+// parentheses is type-checked on its own instead.
+func receiverType(content string, tokens []celToken, celEnv *cel.Env) *types.Type {
+	anchor, ok := receiverAnchor(tokens)
+	if !ok {
 		return nil
 	}
-	return ast.OutputType()
+	end := tokens[len(tokens)-1].end
+	for _, whole := range wholeSources(content[:end], tokens, "dyn(0)") {
+		checked, iss := celEnv.Compile(whole)
+		if iss.Err() != nil {
+			continue
+		}
+		nativeAST := checked.NativeRep()
+		var receiver ast.Expr
+		ast.PreOrderVisit(nativeAST.Expr(), ast.NewExprVisitor(func(e ast.Expr) {
+			if r, ok := nativeAST.SourceInfo().GetOffsetRange(e.ID()); ok && receiver == nil && r.Start == anchor.runeStart {
+				receiver = e
+			}
+		}))
+		if receiver != nil {
+			return nativeAST.GetType(receiver.ID())
+		}
+		if anchor.kind == gen.CELLexerLPAREN {
+			if grouped, iss := celEnv.Compile(content[anchor.end:tokens[len(tokens)-1].start]); iss.Err() == nil {
+				return grouped.OutputType()
+			}
+		}
+		return nil
+	}
+	return nil
+}
+
+// receiverAnchor returns the token the parser records the expression that
+// tokens end with at: the opening bracket of a list, map, message, call, macro
+// or index that ends in its closing one, the dot of a field selection, and
+// otherwise the last token itself, a name or a literal.
+func receiverAnchor(tokens []celToken) (celToken, bool) {
+	n := len(tokens)
+	if n == 0 {
+		return celToken{}, false
+	}
+	switch last := tokens[n-1]; last.kind {
+	case gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
+		depth := 0
+		for _, tok := range slices.Backward(tokens) {
+			switch tok.kind {
+			case gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
+				depth++
+			case gen.CELLexerLPAREN, gen.CELLexerLBRACKET, gen.CELLexerLBRACE:
+				depth--
+				if depth == 0 {
+					return tok, true
+				}
+			}
+		}
+		return celToken{}, false
+	case gen.CELLexerIDENTIFIER:
+		if n > 1 && tokens[n-2].kind == gen.CELLexerDOT {
+			return tokens[n-2], true
+		}
+	}
+	return tokens[n-1], true
 }
 
 // binaryOperatorSymbols returns a map from display symbol (e.g. "&&") to

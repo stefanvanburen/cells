@@ -139,6 +139,36 @@ func TestCompletionDot(t *testing.T) {
 			wantLabels: []string{"contains", "endsWith", "matches", "size", "startsWith"},
 		},
 		{
+			name:       "macro variable",
+			file:       "testdata/completion/macro_variable_receiver.cel",
+			wantLabels: []string{"contains", "endsWith", "matches", "size", "startsWith"},
+		},
+		{
+			name:       "nested macro variable",
+			file:       "testdata/completion/nested_macro_variable_receiver.cel",
+			wantLabels: []string{"contains", "endsWith", "matches", "size", "startsWith"},
+		},
+		{
+			name:       "macro variable in conditional",
+			file:       "testdata/completion/conditional_receiver.cel",
+			wantLabels: []string{"contains", "endsWith", "matches", "size", "startsWith"},
+		},
+		{
+			name:       "parenthesized",
+			file:       "testdata/completion/parenthesized_receiver.cel",
+			wantLabels: []string{"contains", "endsWith", "matches", "size", "startsWith"},
+		},
+		{
+			name:       "macro result",
+			file:       "testdata/completion/macro_result_receiver.cel",
+			wantLabels: []string{"size"},
+		},
+		{
+			name:       "right operand",
+			file:       "testdata/completion/operand_receiver.cel",
+			wantLabels: []string{"contains", "endsWith", "matches", "size", "startsWith"},
+		},
+		{
 			name:       "list",
 			file:       "testdata/completion/list_receiver.cel",
 			wantLabels: []string{"size"},
