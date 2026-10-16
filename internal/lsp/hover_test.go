@@ -166,7 +166,8 @@ func TestHover(t *testing.T) {
 		{name: "select_no_hover_nested", file: "testdata/hover/select.cel", line: 0, char: 10, contains: "", desc: "'nested' property — no hover"},
 
 		// Comprehension variable tests (no hover)
-		{name: "comp_var_no_hover", file: "testdata/hover/comp_var.cel", line: 0, char: 18, contains: "", desc: "'x' comprehension variable — no hover"},
+		{name: "comp_var_declaration", file: "testdata/hover/comp_var.cel", line: 0, char: 14, contains: "`x`: `int`\n\nBound by `all`.", desc: "'x' where all declares it"},
+		{name: "comp_var_use", file: "testdata/hover/comp_var.cel", line: 0, char: 17, contains: "`x`: `int`\n\nBound by `all`.", desc: "'x' where all uses it"},
 
 		// Empty file tests (no hover)
 		{name: "empty_file_no_hover", file: "testdata/semantic_tokens/empty.cel", line: 0, char: 0, contains: "", desc: "empty file — no hover"},

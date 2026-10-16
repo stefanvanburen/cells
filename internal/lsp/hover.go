@@ -63,6 +63,7 @@ func computeHover(f *file, docEnv *environment, pos protocol.Position) (*protoco
 	walkCELExprForHover(nativeAST.Expr(), sourceInfo, f.content, celEnv, collectHover, nil)
 	collectMacroHovers(sourceInfo, f.content, celEnv, collectHover)
 	collectDeclaredHovers(f, docEnv, nativeAST, collectHover)
+	collectBoundHovers(f, celEnv, nativeAST, collectHover)
 
 	// Find the most specific (smallest) hover that contains the target offset.
 	var best *hoverInfo
@@ -125,6 +126,7 @@ func collectDeclaredHovers(
 	}
 
 	sourceInfo := nativeAST.SourceInfo()
+	bindings := nameBindings(nativeAST.Expr())
 	ast.PreOrderVisit(nativeAST.Expr(), ast.NewExprVisitor(func(e ast.Expr) {
 		offsetRange, hasOffset := sourceInfo.GetOffsetRange(e.ID())
 		if !hasOffset {
@@ -135,11 +137,9 @@ func collectDeclaredHovers(
 		switch e.Kind() {
 		case ast.IdentKind:
 			variable, declared := variables[e.AsIdent()]
-			if !declared {
+			if _, bound := bindings[e.ID()]; !declared || bound {
 				return
 			}
-			// The checked type is preferred, since it accounts for a
-			// comprehension variable shadowing a declared name.
 			varType := typeOf(e.ID())
 			if varType == nil {
 				varType = variable.Type()
@@ -173,6 +173,66 @@ func declaredVariableHover(name string, t *types.Type, description string) strin
 		markdown += "\n\n" + description
 	}
 	return markdown
+}
+
+// collectBoundHovers reports the names macros bind, where they are declared
+// and where they are used: the macro that binds each, and its type if the
+// expression type-checks.
+func collectBoundHovers(
+	f *file,
+	celEnv *cel.Env,
+	nativeAST *ast.AST,
+	collectHover func(byteStart, byteEnd int, markdown string),
+) {
+	var typed *ast.AST
+	if checked, _ := f.check(celEnv); checked != nil {
+		typed = checked.NativeRep()
+	}
+	root, sourceInfo := nativeAST.Expr(), nativeAST.SourceInfo()
+	macroOf := func(comp int64) string {
+		call, _ := sourceInfo.GetMacroCall(comp)
+		return call.AsCall().FunctionName()
+	}
+
+	// A declaration has no type of its own in the check, so it takes the
+	// type of a use of the name it declares.
+	type binding struct {
+		comp int64
+		name string
+	}
+	bindingTypes := make(map[binding]*types.Type)
+	bindings := nameBindings(root)
+	ast.PreOrderVisit(root, ast.NewExprVisitor(func(e ast.Expr) {
+		comp, bound := bindings[e.ID()]
+		if e.Kind() != ast.IdentKind || !bound {
+			return
+		}
+		var t *types.Type
+		if typed != nil {
+			t = typed.GetType(e.ID())
+			bindingTypes[binding{comp, e.AsIdent()}] = t
+		}
+		if start, end, ok := exprByteRange(f.content, sourceInfo, e.ID()); ok {
+			collectHover(start, end, boundVariableHover(e.AsIdent(), t, macroOf(comp)))
+		}
+	}))
+	ast.PreOrderVisit(root, ast.NewExprVisitor(func(e ast.Expr) {
+		for _, decl := range macroDeclarations(sourceInfo, e) {
+			if start, end, ok := exprByteRange(f.content, sourceInfo, decl.ID()); ok {
+				t := bindingTypes[binding{e.ID(), decl.AsIdent()}]
+				collectHover(start, end, boundVariableHover(decl.AsIdent(), t, macroOf(e.ID())))
+			}
+		}
+	}))
+}
+
+// boundVariableHover describes a name a macro binds, with its type if known.
+func boundVariableHover(name string, t *types.Type, macro string) string {
+	markdown := fmt.Sprintf("`%s`", name)
+	if t != nil {
+		markdown += fmt.Sprintf(": `%s`", t)
+	}
+	return markdown + fmt.Sprintf("\n\nBound by `%s`.", macro)
 }
 
 // walkCELExprForHover walks the CEL AST and collects hover info.

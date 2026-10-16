@@ -287,6 +287,20 @@ variables:
 		ok.True(t, strings.Contains(got, "string"), ok.Sprintf("hover: %q", got))
 	})
 
+	t.Run("hover_on_shadowing_macro_variable", func(t *testing.T) {
+		t.Parallel()
+
+		// Column 47 is in the use of the loop variable that shadows request,
+		// in an expression that type-checks and in one that does not.
+		got, err := lsp.Hover(`request.method == "POST" || [1].map(request, request + 1).size() > 0`, 1, 47, opts)
+		ok.MustNoError(t, err)
+		ok.Equal(t, got, "`request`: `int`\n\nBound by `map`.")
+
+		got, err = lsp.Hover(`[1].map(request, request + 1).string()`, 1, 18, opts)
+		ok.MustNoError(t, err)
+		ok.Equal(t, got, "`request`\n\nBound by `map`.")
+	})
+
 	t.Run("no_hover_without_declarations", func(t *testing.T) {
 		t.Parallel()
 
