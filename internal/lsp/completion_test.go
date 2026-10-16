@@ -165,6 +165,18 @@ func TestCompletionDot(t *testing.T) {
 			file:       "testdata/completion/macro_in_operand_receiver.cel",
 			wantLabels: []string{"contains", "endsWith", "matches", "size", "startsWith"},
 		},
+		// The source around the receiver could not type-check, though the
+		// receiver can.
+		{
+			name:       "operand of a mismatched operator",
+			file:       "testdata/completion/operand_of_mismatched_operator_receiver.cel",
+			wantLabels: []string{"contains", "endsWith", "matches", "size", "startsWith"},
+		},
+		{
+			name:       "negated",
+			file:       "testdata/completion/negated_receiver.cel",
+			wantLabels: []string{"getHours", "getMilliseconds", "getMinutes", "getSeconds"},
+		},
 		{
 			name:       "macro result",
 			file:       "testdata/completion/macro_result_receiver.cel",

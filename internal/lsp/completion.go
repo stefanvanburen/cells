@@ -247,6 +247,16 @@ func boundCompletionItems(bound map[string]string) []protocol.CompletionItem {
 // and checking it costs time and can fail for reasons of its own, as && does
 // with the list that closing the macro makes.
 func completionRegion(src string, tokens []celToken) (string, []celToken) {
+	open := openBrackets(tokens)
+	if len(open) == 0 {
+		return src, tokens
+	}
+	return rebase(src, tokens, chainStart(tokens, open[0]))
+}
+
+// openBrackets returns the indexes of the brackets tokens leave open, the
+// outermost first.
+func openBrackets(tokens []celToken) []int {
 	var open []int
 	for i, tok := range tokens {
 		switch tok.kind {
@@ -258,14 +268,15 @@ func completionRegion(src string, tokens []celToken) (string, []celToken) {
 			}
 		}
 	}
-	if len(open) == 0 {
-		return src, tokens
-	}
+	return open
+}
 
-	// The chain runs back from the bracket over names, literals, dots and
-	// whole bracketed groups, and stops at anything else, such as an
-	// operator or a comma.
-	first := open[0]
+// chainStart returns the index of the first token of the call chain that ends
+// just before index end, running back over names, literals, dots and whole
+// bracketed groups and stopping at anything else, such as an operator or a
+// comma.
+func chainStart(tokens []celToken, end int) int {
+	first := end
 chain:
 	for first > 0 {
 		switch tokens[first-1].kind {
@@ -284,7 +295,15 @@ chain:
 			break chain
 		}
 	}
+	return first
+}
 
+// rebase returns src from the token at index first on, with the tokens from
+// there rebased onto it.
+func rebase(src string, tokens []celToken, first int) (string, []celToken) {
+	if first >= len(tokens) {
+		return "", nil
+	}
 	base := tokens[first]
 	rebased := make([]celToken, 0, len(tokens)-first)
 	for _, tok := range tokens[first:] {
@@ -319,21 +338,10 @@ func matchingOpener(tokens []celToken, closer int) (int, bool) {
 // with the brackets tokens leave open closed, and the same with alternative
 // after src as well, for a conditional they leave open.
 func wholeSources(src string, tokens []celToken, alternative string) []string {
-	var open []int
-	for _, tok := range tokens {
-		switch tok.kind {
-		case gen.CELLexerLPAREN, gen.CELLexerLBRACKET, gen.CELLexerLBRACE:
-			open = append(open, tok.kind)
-		case gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
-			if len(open) > 0 {
-				open = open[:len(open)-1]
-			}
-		}
-	}
 	closers := map[int]string{gen.CELLexerLPAREN: ")", gen.CELLexerLBRACKET: "]", gen.CELLexerLBRACE: "}"}
 	var b strings.Builder
-	for _, kind := range slices.Backward(open) {
-		b.WriteString(closers[kind])
+	for _, i := range slices.Backward(openBrackets(tokens)) {
+		b.WriteString(closers[tokens[i].kind])
 	}
 	closing := b.String()
 	return []string{src + closing, src + " : " + alternative + closing}
@@ -353,6 +361,11 @@ func receiverType(content string, tokens []celToken, celEnv *cel.Env) *types.Typ
 		return nil
 	}
 	content, tokens = completionRegion(content[:tokens[len(tokens)-1].end], tokens)
+	// A member binds tighter than anything around its receiver, so with no
+	// bracket open the receiver's own chain is all there is to check.
+	if first := chainStart(tokens, len(tokens)); first > 0 && len(openBrackets(tokens)) == 0 {
+		content, tokens = rebase(content, tokens, first)
+	}
 	anchor, ok := receiverAnchor(tokens)
 	if !ok {
 		return nil
