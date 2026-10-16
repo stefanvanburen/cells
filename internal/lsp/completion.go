@@ -177,6 +177,7 @@ const completionPlaceholder = "cells_completion_placeholder"
 // typed there, made whole by [wholeSources]. Where that does not parse, there
 // are no names to offer.
 func boundNamesAt(before string, tokens []celToken, celEnv *cel.Env) map[string]string {
+	before, tokens = completionRegion(before, tokens)
 	src := before
 	if n := len(tokens); n == 0 || tokens[n-1].kind != gen.CELLexerIDENTIFIER || tokens[n-1].end != len(before) {
 		src += completionPlaceholder
@@ -238,6 +239,81 @@ func boundCompletionItems(bound map[string]string) []protocol.CompletionItem {
 	return items
 }
 
+// completionRegion returns the part of src that completion makes whole and
+// type-checks, with tokens, the tokens of src, rebased onto it. That is the
+// call chain holding the outermost bracket tokens leave open, such as
+// ["z"].map(s, s in true && ["z"].map(s, s, or all of src if no bracket is
+// open. Anything around that chain has no bearing on what the cursor is in,
+// and checking it costs time and can fail for reasons of its own, as && does
+// with the list that closing the macro makes.
+func completionRegion(src string, tokens []celToken) (string, []celToken) {
+	var open []int
+	for i, tok := range tokens {
+		switch tok.kind {
+		case gen.CELLexerLPAREN, gen.CELLexerLBRACKET, gen.CELLexerLBRACE:
+			open = append(open, i)
+		case gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
+			if len(open) > 0 {
+				open = open[:len(open)-1]
+			}
+		}
+	}
+	if len(open) == 0 {
+		return src, tokens
+	}
+
+	// The chain runs back from the bracket over names, literals, dots and
+	// whole bracketed groups, and stops at anything else, such as an
+	// operator or a comma.
+	first := open[0]
+chain:
+	for first > 0 {
+		switch tokens[first-1].kind {
+		case gen.CELLexerIDENTIFIER, gen.CELLexerESC_IDENTIFIER, gen.CELLexerDOT,
+			gen.CELLexerSTRING, gen.CELLexerBYTES,
+			gen.CELLexerNUM_INT, gen.CELLexerNUM_UINT, gen.CELLexerNUM_FLOAT,
+			gen.CELLexerCEL_TRUE, gen.CELLexerCEL_FALSE, gen.CELLexerNUL:
+			first--
+		case gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
+			opener, ok := matchingOpener(tokens, first-1)
+			if !ok {
+				break chain
+			}
+			first = opener
+		default:
+			break chain
+		}
+	}
+
+	base := tokens[first]
+	rebased := make([]celToken, 0, len(tokens)-first)
+	for _, tok := range tokens[first:] {
+		tok.start -= base.start
+		tok.end -= base.start
+		tok.runeStart -= base.runeStart
+		rebased = append(rebased, tok)
+	}
+	return src[base.start:], rebased
+}
+
+// matchingOpener returns the index of the bracket that the closing bracket at
+// index closer closes.
+func matchingOpener(tokens []celToken, closer int) (int, bool) {
+	depth := 0
+	for i := closer; i >= 0; i-- {
+		switch tokens[i].kind {
+		case gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
+			depth++
+		case gen.CELLexerLPAREN, gen.CELLexerLBRACKET, gen.CELLexerLBRACE:
+			depth--
+			if depth == 0 {
+				return i, true
+			}
+		}
+	}
+	return 0, false
+}
+
 // wholeSources returns ways to make src, which tokens lead up to, a whole
 // expression, since the source is rarely whole while it is being typed: src
 // with the brackets tokens leave open closed, and the same with alternative
@@ -273,6 +349,10 @@ func wholeSources(src string, tokens []celToken, alternative string) []string {
 // records nothing at the parenthesis of a grouping, so a receiver in
 // parentheses is type-checked on its own instead.
 func receiverType(content string, tokens []celToken, celEnv *cel.Env) *types.Type {
+	if len(tokens) == 0 {
+		return nil
+	}
+	content, tokens = completionRegion(content[:tokens[len(tokens)-1].end], tokens)
 	anchor, ok := receiverAnchor(tokens)
 	if !ok {
 		return nil
@@ -314,19 +394,11 @@ func receiverAnchor(tokens []celToken) (celToken, bool) {
 	}
 	switch last := tokens[n-1]; last.kind {
 	case gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
-		depth := 0
-		for _, tok := range slices.Backward(tokens) {
-			switch tok.kind {
-			case gen.CELLexerRPAREN, gen.CELLexerRPRACKET, gen.CELLexerRBRACE:
-				depth++
-			case gen.CELLexerLPAREN, gen.CELLexerLBRACKET, gen.CELLexerLBRACE:
-				depth--
-				if depth == 0 {
-					return tok, true
-				}
-			}
+		opener, ok := matchingOpener(tokens, n-1)
+		if !ok {
+			return celToken{}, false
 		}
-		return celToken{}, false
+		return tokens[opener], true
 	case gen.CELLexerIDENTIFIER:
 		if n > 1 && tokens[n-2].kind == gen.CELLexerDOT {
 			return tokens[n-2], true
@@ -361,7 +433,8 @@ func expectedOperandType(content string, tokens []celToken, offset int, celEnv *
 		return nil
 	}
 
-	before := content[:tokens[len(tokens)-1].end] + " "
+	before, tokens := completionRegion(content[:tokens[len(tokens)-1].end], tokens)
+	before += " "
 	// The placeholder's call is recorded at its parenthesis.
 	placeholder := int32(utf8.RuneCountInString(before) + len("dyn"))
 	for _, whole := range wholeSources(before+"dyn(0)", tokens, "dyn(0)") {

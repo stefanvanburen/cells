@@ -158,6 +158,13 @@ func TestCompletionDot(t *testing.T) {
 			file:       "testdata/completion/parenthesized_receiver.cel",
 			wantLabels: []string{"contains", "endsWith", "matches", "size", "startsWith"},
 		},
+		// The source around the macro could not type-check with the macro
+		// closed, since && takes no list.
+		{
+			name:       "macro variable in an operand",
+			file:       "testdata/completion/macro_in_operand_receiver.cel",
+			wantLabels: []string{"contains", "endsWith", "matches", "size", "startsWith"},
+		},
 		{
 			name:       "macro result",
 			file:       "testdata/completion/macro_result_receiver.cel",
@@ -340,6 +347,12 @@ func TestCompletionAfterToken(t *testing.T) {
 		{
 			name:        "string plus in macro",
 			file:        "testdata/completion/after_plus_in_macro.cel",
+			wantPresent: []string{"string", "s"},
+			wantAbsent:  []string{"int", "size", "timestamp", "true"},
+		},
+		{
+			name:        "string plus in macro in an operand",
+			file:        "testdata/completion/after_plus_in_macro_operand.cel",
 			wantPresent: []string{"string", "s"},
 			wantAbsent:  []string{"int", "size", "timestamp", "true"},
 		},
