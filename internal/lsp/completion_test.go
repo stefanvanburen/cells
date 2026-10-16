@@ -338,6 +338,26 @@ func TestCompletionAfterToken(t *testing.T) {
 			wantAbsent:  []string{"int", "size", "string", "timestamp", "duration", "null"},
 		},
 		{
+			name:        "string plus in macro",
+			file:        "testdata/completion/after_plus_in_macro.cel",
+			wantPresent: []string{"string", "s"},
+			wantAbsent:  []string{"int", "size", "timestamp", "true"},
+		},
+		{
+			// + binds tighter than <, so its left operand is 2.
+			name:        "plus in comparison",
+			file:        "testdata/completion/after_plus_in_comparison.cel",
+			wantPresent: []string{"int", "size"},
+			wantAbsent:  []string{"string", "timestamp", "true"},
+		},
+		{
+			// && binds looser than ==, so its left operand is the comparison.
+			name:        "and after comparison",
+			file:        "testdata/completion/after_and_comparison.cel",
+			wantPresent: []string{"bool", "true"},
+			wantAbsent:  []string{"int", "size", "string"},
+		},
+		{
 			name:        "in",
 			file:        "testdata/completion/after_in.cel",
 			wantPresent: []string{"size", "true"},

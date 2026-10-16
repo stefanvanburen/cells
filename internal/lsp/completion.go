@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode/utf8"
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common/ast"
@@ -57,7 +58,7 @@ func (s *server) Completion(ctx context.Context, params *protocol.CompletionPara
 	// Check for operator context to filter by expected type.
 	var expectedType *types.Type
 	if f != nil {
-		expectedType = expectedTypeAfterOperator(f.content, params.Position, docEnv.celEnv)
+		expectedType = expectedOperandType(f.content, tokens, offset, docEnv.celEnv)
 	}
 
 	var bound map[string]string
@@ -334,75 +335,64 @@ func receiverAnchor(tokens []celToken) (celToken, bool) {
 	return tokens[n-1], true
 }
 
-// binaryOperatorSymbols returns a map from display symbol (e.g. "&&") to
-// cel-go internal name (e.g. "_&&_"), derived from the environment's functions
-// and operators.FindReverseBinaryOperator.
-func binaryOperatorSymbols(celEnv *cel.Env) map[string]string {
-	result := make(map[string]string)
-	for name := range celEnv.Functions() {
-		display, ok := operators.FindReverseBinaryOperator(name)
-		if ok && display != "" {
-			// Prefer the canonical form (e.g. "@in" over "_in_").
-			if _, exists := result[display]; !exists {
-				result[display] = name
-			}
-		}
+// expectedOperandType returns the type a binary operator expects of the
+// operand being completed after it, or nil if the cursor is not after one or
+// the type cannot be narrowed to one. tokens are the tokens of content before
+// offset.
+//
+// What is type-checked is the source with dyn(0) standing for the operand,
+// made whole by [wholeSources]. The operator is the call that placeholder is
+// the second argument of, and its first argument is the operand on its left,
+// as precedence makes it: 2.0 in 1 + 2.0 *, but 1 == 2 in 1 == 2 &&.
+func expectedOperandType(content string, tokens []celToken, offset int, celEnv *cel.Env) *types.Type {
+	// A name being typed is the operand itself.
+	if n := len(tokens); n > 0 && tokens[n-1].kind == gen.CELLexerIDENTIFIER && tokens[n-1].end == offset {
+		tokens = tokens[:n-1]
 	}
-	return result
+	if len(tokens) == 0 {
+		return nil
+	}
+	switch tokens[len(tokens)-1].kind {
+	case gen.CELLexerEQUALS, gen.CELLexerNOT_EQUALS, gen.CELLexerIN,
+		gen.CELLexerLESS, gen.CELLexerLESS_EQUALS, gen.CELLexerGREATER_EQUALS, gen.CELLexerGREATER,
+		gen.CELLexerLOGICAL_AND, gen.CELLexerLOGICAL_OR,
+		gen.CELLexerPLUS, gen.CELLexerMINUS, gen.CELLexerSTAR, gen.CELLexerSLASH, gen.CELLexerPERCENT:
+	default:
+		return nil
+	}
+
+	before := content[:tokens[len(tokens)-1].end] + " "
+	// The placeholder's call is recorded at its parenthesis.
+	placeholder := int32(utf8.RuneCountInString(before) + len("dyn"))
+	for _, whole := range wholeSources(before+"dyn(0)", tokens, "dyn(0)") {
+		checked, iss := celEnv.Compile(whole)
+		if iss.Err() != nil {
+			continue
+		}
+		nativeAST := checked.NativeRep()
+		var operator ast.Expr
+		ast.PreOrderVisit(nativeAST.Expr(), ast.NewExprVisitor(func(e ast.Expr) {
+			if e.Kind() != ast.CallKind || len(e.AsCall().Args()) != 2 {
+				return
+			}
+			if r, ok := nativeAST.SourceInfo().GetOffsetRange(e.AsCall().Args()[1].ID()); ok && r.Start == placeholder {
+				operator = e
+			}
+		}))
+		if operator == nil {
+			return nil
+		}
+		call := operator.AsCall()
+		return rightOperandType(celEnv, call.FunctionName(), nativeAST.GetType(call.Args()[0].ID()))
+	}
+	return nil
 }
 
-// expectedTypeAfterOperator checks if the cursor is positioned after a binary
-// operator and determines the expected type for the right-hand operand.
-// Returns nil if no operator context is detected or the type can't be determined.
-func expectedTypeAfterOperator(content string, pos protocol.Position, celEnv *cel.Env) *types.Type {
-	offset := lineColToByteOffset(content, pos.Line, pos.Character)
-	if offset <= 0 {
-		return nil
-	}
-
-	before := strings.TrimRight(content[:offset], " \t\r\n")
-	if before == "" {
-		return nil
-	}
-
-	opSymbols := binaryOperatorSymbols(celEnv)
-
-	// Sort display symbols longest-first so multi-character operators
-	// (e.g. "&&") match before single-character ones (e.g. ">").
-	symbols := make([]string, 0, len(opSymbols))
-	for sym := range opSymbols {
-		symbols = append(symbols, sym)
-	}
-	slices.SortFunc(symbols, func(a, b string) int {
-		return cmp.Compare(len(b), len(a))
-	})
-
-	// Find a binary operator at the end of the trimmed content.
-	var celOp, leftExpr string
-	for _, sym := range symbols {
-		if strings.HasSuffix(before, sym) {
-			candidate := strings.TrimRight(before[:len(before)-len(sym)], " \t\r\n")
-			if candidate == "" {
-				continue
-			}
-			celOp = opSymbols[sym]
-			leftExpr = candidate
-			break
-		}
-	}
-	if celOp == "" {
-		return nil
-	}
-
-	// Compile the left-hand expression to determine its type.
-	ast, iss := celEnv.Compile(leftExpr)
-	if iss.Err() != nil {
-		return nil
-	}
-	leftType := ast.OutputType()
-
-	// Find operator overloads that accept leftType and collect expected right types.
-	fn, ok := celEnv.Functions()[celOp]
+// rightOperandType returns the one type the overloads of the binary operator
+// function accept on the right of a left operand of leftType, or nil if they
+// accept more than one.
+func rightOperandType(celEnv *cel.Env, function string, leftType *types.Type) *types.Type {
+	fn, ok := celEnv.Functions()[function]
 	if !ok {
 		return nil
 	}
