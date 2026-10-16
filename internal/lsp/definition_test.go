@@ -1,6 +1,7 @@
 package lsp_test
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
 	"testing"
@@ -260,6 +261,11 @@ func TestRenameMacroBinding(t *testing.T) {
 		expr string
 		cols []int
 		want string
+		// to is the new name, w if empty.
+		to string
+		// conflict is set where the new name would change what a name refers
+		// to, which the rename refuses.
+		conflict bool
 	}{
 		{
 			expr: `cel.bind(v, 1 + 1, v * v)`,
@@ -283,11 +289,28 @@ func TestRenameMacroBinding(t *testing.T) {
 			cols: []int{17, 20},
 			want: `{'a': 1}.all(k, w, w > 0 && k != '')`,
 		},
+		// The y outside the macro is out of its scope.
+		{
+			expr: `[1].map(x, x) + y`,
+			cols: []int{9},
+			to:   "y",
+			want: `[1].map(y, y) + y`,
+		},
+		// The y the macro's body uses would become the macro's.
+		{expr: `[1].map(x, x + y)`, cols: []int{9}, to: "y", conflict: true},
+		// The x would become the y the macro binds.
+		{expr: `[1].map(y, x + y)`, cols: []int{12}, to: "y", conflict: true},
+		{expr: `[1].map(x, [2].map(y, x + y))`, cols: []int{9}, to: "y", conflict: true},
 	}
 	opts := lsp.Options{Extensions: []string{"bindings", "comprehensions"}}
 	for _, tt := range tests {
+		to := cmp.Or(tt.to, "w")
 		for _, col := range tt.cols {
-			got, err := lsp.Rename(tt.expr, 1, col, "w", opts)
+			got, err := lsp.Rename(tt.expr, 1, col, to, opts)
+			if tt.conflict {
+				ok.True(t, err != nil, ok.Sprintf("renaming %s at col %d to %s", tt.expr, col, to))
+				continue
+			}
 			ok.MustNoError(t, err)
 			ok.Equal(t, got, tt.want, ok.Sprintf("renaming %s at col %d", tt.expr, col))
 		}

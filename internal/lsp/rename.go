@@ -3,6 +3,7 @@ package lsp
 import (
 	"context"
 	"fmt"
+	"maps"
 	"unicode"
 
 	"cel.dev/cel-go/cel"
@@ -71,11 +72,28 @@ func computeRename(f *file, celEnv *cel.Env, params protocol.RenameParams) (*pro
 	for _, r := range ranges {
 		edits = append(edits, protocol.TextEdit{Range: r, NewText: params.NewName})
 	}
+	if changesReferents(f, celEnv, edits) {
+		return nil, fmt.Errorf("renaming %q to %q would change what a name refers to", info.name, params.NewName)
+	}
 	return &protocol.WorkspaceEdit{
 		Changes: map[lspuri.URI][]protocol.TextEdit{
 			params.TextDocument.URI: edits,
 		},
 	}, nil
+}
+
+// changesReferents reports whether applying edits, a rename, to f would change
+// what any name in it refers to: a name the renamed one would now be bound by,
+// or one it would now bind. Renaming leaves the expression's shape and so its
+// IDs as they were, so every identifier must resolve to the same binding after
+// as before.
+func changesReferents(f *file, celEnv *cel.Env, edits []protocol.TextEdit) bool {
+	before := f.ast(celEnv)
+	renamed, iss := celEnv.Parse(applyTextEdits(f.content, edits))
+	if before == nil || iss.Err() != nil {
+		return true
+	}
+	return !maps.Equal(nameBindings(before.Expr()), nameBindings(renamed.NativeRep().Expr()))
 }
 
 func computePrepareRename(f *file, celEnv *cel.Env, pos protocol.Position) (protocol.PrepareRenameResult, error) {
