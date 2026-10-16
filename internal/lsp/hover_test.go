@@ -167,6 +167,7 @@ func TestHover(t *testing.T) {
 
 		// Comprehension variable tests (no hover)
 		{name: "comp_var_declaration", file: "testdata/hover/comp_var.cel", line: 0, char: 14, contains: "`x`: `int`\n\nBound by `all`.", desc: "'x' where all declares it"},
+		{name: "comp_var_unused", file: "testdata/hover/unused_comp_var.cel", line: 0, char: 8, contains: "`x`: `int`\n\nBound by `map`.", desc: "'x' that map declares and nothing uses"},
 		{name: "comp_var_use", file: "testdata/hover/comp_var.cel", line: 0, char: 17, contains: "`x`: `int`\n\nBound by `all`.", desc: "'x' where all uses it"},
 
 		// Empty file tests (no hover)

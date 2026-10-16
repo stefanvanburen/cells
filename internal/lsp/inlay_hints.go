@@ -82,20 +82,9 @@ func loopVariableHints(content string, checked *celast.AST) []protocol.InlayHint
 	hints := []protocol.InlayHint{}
 	sourceInfo := checked.SourceInfo()
 	celast.PreOrderVisit(checked.Expr(), celast.NewExprVisitor(func(e celast.Expr) {
-		if e.Kind() != celast.ComprehensionKind {
-			return
-		}
-		call, ok := sourceInfo.GetMacroCall(e.ID())
-		if !ok || call.Kind() != celast.CallKind {
-			return
-		}
-		comp := e.AsComprehension()
-		for _, arg := range call.AsCall().Args() {
-			if arg.Kind() != celast.IdentKind {
-				continue
-			}
-			t := loopVariableType(comp, arg.AsIdent(), checked.TypeMap())
-			_, end, ok := exprByteRange(content, sourceInfo, arg.ID())
+		for _, decl := range macroDeclarations(sourceInfo, e) {
+			t := loopVariableType(e.AsComprehension(), decl.AsIdent(), checked.TypeMap())
+			_, end, ok := exprByteRange(content, sourceInfo, decl.ID())
 			if t == nil || !ok {
 				continue
 			}

@@ -194,13 +194,6 @@ func collectBoundHovers(
 		return call.AsCall().FunctionName()
 	}
 
-	// A declaration has no type of its own in the check, so it takes the
-	// type of a use of the name it declares.
-	type binding struct {
-		comp int64
-		name string
-	}
-	bindingTypes := make(map[binding]*types.Type)
 	bindings := nameBindings(root)
 	ast.PreOrderVisit(root, ast.NewExprVisitor(func(e ast.Expr) {
 		comp, bound := bindings[e.ID()]
@@ -210,7 +203,6 @@ func collectBoundHovers(
 		var t *types.Type
 		if typed != nil {
 			t = typed.GetType(e.ID())
-			bindingTypes[binding{comp, e.AsIdent()}] = t
 		}
 		if start, end, ok := exprByteRange(f.content, sourceInfo, e.ID()); ok {
 			collectHover(start, end, boundVariableHover(e.AsIdent(), t, macroOf(comp)))
@@ -219,7 +211,10 @@ func collectBoundHovers(
 	ast.PreOrderVisit(root, ast.NewExprVisitor(func(e ast.Expr) {
 		for _, decl := range macroDeclarations(sourceInfo, e) {
 			if start, end, ok := exprByteRange(f.content, sourceInfo, decl.ID()); ok {
-				t := bindingTypes[binding{e.ID(), decl.AsIdent()}]
+				var t *types.Type
+				if typed != nil {
+					t = loopVariableType(e.AsComprehension(), decl.AsIdent(), typed.TypeMap())
+				}
 				collectHover(start, end, boundVariableHover(decl.AsIdent(), t, macroOf(e.ID())))
 			}
 		}

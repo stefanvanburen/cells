@@ -120,6 +120,8 @@ func TestInlayHintsLoopVariableTypes(t *testing.T) {
 		{"dyn", "request.headers.all(h, h != '')", []string{"1:22 : dyn"}},
 		{"nested", "[[1]].all(xs, xs.all(x, x > 0))", []string{"1:13 : list(int)", "1:23 : int"}},
 		{"multiline", "[1].map(\n  x,\n  x * 2\n)", []string{"2:4 : int"}},
+		// The body is the variable itself, which is a use, not a declaration.
+		{"identity", "[1].map(x, x)", []string{"1:10 : int"}},
 		{"does_not_check", "[1].all(x, x > undeclared)", nil},
 	}
 	for _, tt := range tests {
