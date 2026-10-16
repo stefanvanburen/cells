@@ -283,13 +283,8 @@ func (c *tokenClassifier) walk(expr ast.Expr, scope map[string]bool) {
 		if comp.HasIterVar2() {
 			bound[comp.IterVar2()] = true
 		}
-		// The declarations are arguments of the call the macro was written as.
-		if call, ok := c.sourceInfo.GetMacroCall(expr.ID()); ok && call.Kind() == ast.CallKind {
-			for _, arg := range call.AsCall().Args() {
-				if arg.Kind() == ast.IdentKind && bound[arg.AsIdent()] {
-					c.set(c.anchor(arg.ID()), semanticTypeVariable, semanticModifierDeclaration)
-				}
-			}
+		for _, decl := range macroDeclarations(c.sourceInfo, expr) {
+			c.set(c.anchor(decl.ID()), semanticTypeVariable, semanticModifierDeclaration)
 		}
 
 		inner := maps.Clone(scope)
