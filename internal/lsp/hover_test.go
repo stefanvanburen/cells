@@ -4,19 +4,24 @@ import (
 	"strings"
 	"testing"
 
+	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
+	"go.lsp.dev/uri"
 	"go.vanburen.xyz/ok"
 )
 
-// getHover sends a textDocument/hover request and returns the result.
+// getHover opens celFile in a new server and returns the hover at (line, character).
 func getHover(t *testing.T, celFile string, line, character uint32) *protocol.Hover {
 	t.Helper()
-	ctx := t.Context()
-	testPath := getAbsPath(t, celFile)
-	clientConn, testURI := setupLSPServer(t, testPath)
+	clientConn, testURI := setupLSPServer(t, getAbsPath(t, celFile))
+	return hoverAt(t, clientConn, testURI, line, character)
+}
 
+// hoverAt sends a textDocument/hover request and returns the result.
+func hoverAt(t *testing.T, clientConn jsonrpc2.Conn, testURI uri.URI, line, character uint32) *protocol.Hover {
+	t.Helper()
 	var result *protocol.Hover
-	_, err := clientConn.Call(ctx, "textDocument/hover", protocol.HoverParams{
+	_, err := clientConn.Call(t.Context(), "textDocument/hover", protocol.HoverParams{
 		TextDocument: protocol.TextDocumentIdentifier{
 			URI: testURI,
 		},
@@ -32,7 +37,12 @@ func getHover(t *testing.T, celFile string, line, character uint32) *protocol.Ho
 // requireHoverContains asserts that hover at (line, char) produces markdown containing substr.
 func requireHoverContains(t *testing.T, celFile string, line, character uint32, substr string, desc string) {
 	t.Helper()
-	result := getHover(t, celFile, line, character)
+	requireMarkdownContains(t, getHover(t, celFile, line, character), substr)
+}
+
+// requireMarkdownContains asserts that result is markdown containing substr.
+func requireMarkdownContains(t *testing.T, result *protocol.Hover, substr string) {
+	t.Helper()
 	ok.True(t, result != nil)
 	markup, isMarkup := result.Contents.(*protocol.MarkupContent)
 	ok.True(t, isMarkup)
@@ -238,161 +248,169 @@ func TestHover(t *testing.T) {
 
 func TestHoverComprehensive(t *testing.T) {
 	t.Parallel()
-	f := "testdata/hover/comprehensive.cel"
+	clientConn, testURI := setupLSPServer(t, getAbsPath(t, "testdata/hover/comprehensive.cel"))
+	hoverContains := func(line, character uint32, substr, desc string) {
+		t.Helper()
+		requireMarkdownContains(t, hoverAt(t, clientConn, testURI, line, character), substr)
+	}
+	noHover := func(line, character uint32, desc string) {
+		t.Helper()
+		ok.True(t, hoverAt(t, clientConn, testURI, line, character) == nil)
+	}
 
 	// --- Operators ---
 	// Line 7: (x + y) * 2 - z / w % 3 >= 10 &&
-	requireHoverContains(t, f, 7, 3, "adds two numeric", "'+' operator")
-	requireHoverContains(t, f, 7, 8, "multiply", "'*' operator")
-	requireHoverContains(t, f, 7, 12, "subtract", "'-' operator")
-	requireHoverContains(t, f, 7, 16, "divide", "'/' operator")
-	requireHoverContains(t, f, 7, 20, "modulus", "'%' operator")
-	requireHoverContains(t, f, 7, 24, "greater than or equal", "'>=' operator")
-	requireHoverContains(t, f, 7, 31, "logically AND", "'&&' operator")
+	hoverContains(7, 3, "adds two numeric", "'+' operator")
+	hoverContains(7, 8, "multiply", "'*' operator")
+	hoverContains(7, 12, "subtract", "'-' operator")
+	hoverContains(7, 16, "divide", "'/' operator")
+	hoverContains(7, 20, "modulus", "'%' operator")
+	hoverContains(7, 24, "greater than or equal", "'>=' operator")
+	hoverContains(7, 31, "logically AND", "'&&' operator")
 
 	// --- String methods ---
 	// Line 10: "hello world".contains("world") &&
-	requireHoverContains(t, f, 10, 14, "contains", "'.contains' method")
-	requireHoverContains(t, f, 10, 14, "substring", "'.contains' description")
+	hoverContains(10, 14, "contains", "'.contains' method")
+	hoverContains(10, 14, "substring", "'.contains' description")
 
 	// Line 11: "hello".startsWith("he") &&
-	requireHoverContains(t, f, 11, 8, "startsWith", "'.startsWith' method")
+	hoverContains(11, 8, "startsWith", "'.startsWith' method")
 
 	// Line 12: "hello".endsWith("lo") &&
-	requireHoverContains(t, f, 12, 8, "endsWith", "'.endsWith' method")
+	hoverContains(12, 8, "endsWith", "'.endsWith' method")
 
 	// Line 13: "abc123".matches("[a-z]+[0-9]+") &&
-	requireHoverContains(t, f, 13, 9, "matches", "'.matches' method")
+	hoverContains(13, 9, "matches", "'.matches' method")
 
 	// Line 14: size("test") == 4 &&
-	requireHoverContains(t, f, 14, 0, "size", "'size' function")
-	requireHoverContains(t, f, 14, 0, "**Overloads**", "'size' has overloads")
+	hoverContains(14, 0, "size", "'size' function")
+	hoverContains(14, 0, "**Overloads**", "'size' has overloads")
 
 	// --- Type conversions ---
 	// Line 17: int("42") + double("3.14") > 0.0 &&
-	requireHoverContains(t, f, 17, 0, "convert a value to an int", "'int()' hover")
-	requireHoverContains(t, f, 17, 0, "**Type**", "'int' type header")
-	requireHoverContains(t, f, 17, 12, "convert a value to a double", "'double()' hover")
+	hoverContains(17, 0, "convert a value to an int", "'int()' hover")
+	hoverContains(17, 0, "**Type**", "'int' type header")
+	hoverContains(17, 12, "convert a value to a double", "'double()' hover")
 
 	// Line 18: string(42) != "" &&
-	requireHoverContains(t, f, 18, 0, "convert a value to a string", "'string()' hover")
+	hoverContains(18, 0, "convert a value to a string", "'string()' hover")
 
 	// Line 19: uint(10) > 0u &&
-	requireHoverContains(t, f, 19, 0, "convert a value to a uint", "'uint()' hover")
+	hoverContains(19, 0, "convert a value to a uint", "'uint()' hover")
 
 	// Line 20: bool("true") == true &&
-	requireHoverContains(t, f, 20, 0, "convert a value to a boolean", "'bool()' hover")
-	requireHoverContains(t, f, 20, 19, "true", "'true' keyword")
+	hoverContains(20, 0, "convert a value to a boolean", "'bool()' hover")
+	hoverContains(20, 19, "true", "'true' keyword")
 
 	// Line 21: bytes("hello") == b"hello" &&
-	requireHoverContains(t, f, 21, 0, "convert a value to bytes", "'bytes()' hover")
+	hoverContains(21, 0, "convert a value to bytes", "'bytes()' hover")
 
 	// Line 22: type(42) == int &&
-	requireHoverContains(t, f, 22, 0, "type identifier", "'type()' hover")
+	hoverContains(22, 0, "type identifier", "'type()' hover")
 
 	// Line 23: dyn(1) == 1 &&
-	requireHoverContains(t, f, 23, 0, "dynamic", "'dyn()' hover")
+	hoverContains(23, 0, "dynamic", "'dyn()' hover")
 
 	// --- List/Map operations ---
 	// Line 26: [1, 2, 3].size() == 3 &&
-	requireHoverContains(t, f, 26, 10, "size", "'.size()' method on list")
+	hoverContains(26, 10, "size", "'.size()' method on list")
 
 	// --- Macros ---
 	// Line 33: has({"field": true}.field) &&
-	requireHoverContains(t, f, 33, 0, "**Macro**: `has`", "'has' macro")
-	requireHoverContains(t, f, 33, 0, "presence", "'has' description")
+	hoverContains(33, 0, "**Macro**: `has`", "'has' macro")
+	hoverContains(33, 0, "presence", "'has' description")
 
 	// Line 36: "a" in ["a", "b", "c"] &&
-	requireHoverContains(t, f, 36, 4, "exists in a list", "'in' operator")
+	hoverContains(36, 4, "exists in a list", "'in' operator")
 
 	// Line 40: [1, 2, 3].all(i, i > 0) &&
-	requireHoverContains(t, f, 40, 10, "**Macro**: `all`", "'all' macro")
-	requireHoverContains(t, f, 40, 10, "all elements", "'all' description")
+	hoverContains(40, 10, "**Macro**: `all`", "'all' macro")
+	hoverContains(40, 10, "all elements", "'all' description")
 
 	// Line 43: [1, 2, 3].exists(i, i == 2) &&
-	requireHoverContains(t, f, 43, 10, "exists", "'exists' macro")
+	hoverContains(43, 10, "exists", "'exists' macro")
 
 	// Line 46: [1, 2, 3].exists_one(i, i > 2) &&
-	requireHoverContains(t, f, 46, 10, "exists_one", "'exists_one' macro")
-	requireHoverContains(t, f, 46, 10, "exactly one", "'exists_one' description")
+	hoverContains(46, 10, "exists_one", "'exists_one' macro")
+	hoverContains(46, 10, "exactly one", "'exists_one' description")
 
 	// Line 49: [1, 2, 3].map(i, i * 2) == [2, 4, 6] &&
-	requireHoverContains(t, f, 49, 10, "**Macro**: `map`", "'map' macro")
+	hoverContains(49, 10, "**Macro**: `map`", "'map' macro")
 
 	// Line 52: [1, 2, 3, 4, 5].filter(i, i > 3) == [4, 5] &&
-	requireHoverContains(t, f, 52, 16, "filter", "'filter' macro")
+	hoverContains(52, 16, "filter", "'filter' macro")
 
 	// --- Ternary ---
 	// Line 58: (x > 0 ? "positive" : "non-positive") != "" &&
-	requireHoverContains(t, f, 58, 7, "ternary", "ternary '?'")
+	hoverContains(58, 7, "ternary", "ternary '?'")
 
 	// --- Logical operators ---
 	// Line 61: !(false) &&
-	requireHoverContains(t, f, 61, 0, "negate", "'!' operator")
+	hoverContains(61, 0, "negate", "'!' operator")
 
 	// Line 62: true || false &&
-	requireHoverContains(t, f, 62, 5, "logically OR", "'||' operator")
+	hoverContains(62, 5, "logically OR", "'||' operator")
 
 	// --- Comparison operators ---
 	// Line 65: 1 == 1 &&
-	requireHoverContains(t, f, 65, 2, "equality", "'==' operator")
+	hoverContains(65, 2, "equality", "'==' operator")
 
 	// Line 66: 1 != 2 &&
-	requireHoverContains(t, f, 66, 2, "inequality", "'!=' operator")
+	hoverContains(66, 2, "inequality", "'!=' operator")
 
 	// Line 67: 1 < 2 &&
-	requireHoverContains(t, f, 67, 2, "less than", "'<' operator")
+	hoverContains(67, 2, "less than", "'<' operator")
 
 	// Line 68: 1 <= 2 &&
-	requireHoverContains(t, f, 68, 2, "less than or equal", "'<=' operator")
+	hoverContains(68, 2, "less than or equal", "'<=' operator")
 
 	// Line 69: 2 > 1 &&
-	requireHoverContains(t, f, 69, 2, "greater than", "'>' operator")
+	hoverContains(69, 2, "greater than", "'>' operator")
 
 	// Line 70: 2 >= 1 &&
-	requireHoverContains(t, f, 70, 2, "greater than or equal", "'>=' operator")
+	hoverContains(70, 2, "greater than or equal", "'>=' operator")
 
 	// --- Negation and unary minus ---
 	// Line 73: !false &&
-	requireHoverContains(t, f, 73, 0, "negate", "'!' negation")
+	hoverContains(73, 0, "negate", "'!' negation")
 
 	// Line 74: -x + 1 > 0 &&
-	requireHoverContains(t, f, 74, 0, "negate", "unary '-'")
+	hoverContains(74, 0, "negate", "unary '-'")
 
 	// --- Keywords ---
 	// Line 80: true != false &&
-	requireHoverContains(t, f, 80, 0, "true", "'true' keyword")
-	requireHoverContains(t, f, 80, 8, "false", "'false' keyword")
+	hoverContains(80, 0, "true", "'true' keyword")
+	hoverContains(80, 8, "false", "'false' keyword")
 
 	// Line 81: null == null &&
-	requireHoverContains(t, f, 81, 0, "null", "'null' keyword")
-	requireHoverContains(t, f, 81, 0, "null_type", "'null' type info")
+	hoverContains(81, 0, "null", "'null' keyword")
+	hoverContains(81, 0, "null_type", "'null' type info")
 
 	// --- No hover cases ---
-	requireNoHover(t, f, 7, 1, "'x' identifier — no hover")
-	requireNoHover(t, f, 10, 1, "string literal — no hover")
-	requireNoHover(t, f, 7, 10, "number '2' — no hover")
-	requireNoHover(t, f, 0, 5, "comment — no hover")
-	requireNoHover(t, f, 77, 0, "'msg' identifier — no hover")
+	noHover(7, 1, "'x' identifier — no hover")
+	noHover(10, 1, "string literal — no hover")
+	noHover(7, 10, "number '2' — no hover")
+	noHover(0, 5, "comment — no hover")
+	noHover(77, 0, "'msg' identifier — no hover")
 
 	// --- Duration/Timestamp ---
 	// Line 102: duration("1h") > duration("30m") &&
-	requireHoverContains(t, f, 102, 0, "duration", "'duration()' type")
-	requireHoverContains(t, f, 102, 0, "**Type**", "'duration' type header")
+	hoverContains(102, 0, "duration", "'duration()' type")
+	hoverContains(102, 0, "**Type**", "'duration' type header")
 
 	// Line 103: timestamp("2023-01-01T00:00:00Z") < timestamp("2024-01-01T00:00:00Z") &&
-	requireHoverContains(t, f, 103, 0, "timestamp", "'timestamp()' type")
+	hoverContains(103, 0, "timestamp", "'timestamp()' type")
 
 	// --- Size method/function forms ---
 	// Line 112: size("hello") == 5 &&
-	requireHoverContains(t, f, 112, 0, "size", "'size()' function form")
+	hoverContains(112, 0, "size", "'size()' function form")
 	// Line 113: "hello".size() == 5 &&
-	requireHoverContains(t, f, 113, 8, "size", "'.size()' method form")
+	hoverContains(113, 8, "size", "'.size()' method form")
 
 	// --- Final line ---
 	// Line 120: x + y == z
-	requireHoverContains(t, f, 120, 2, "adds two numeric", "'+' on final line")
-	requireHoverContains(t, f, 120, 6, "equality", "'==' on final line")
+	hoverContains(120, 2, "adds two numeric", "'+' on final line")
+	hoverContains(120, 6, "equality", "'==' on final line")
 
 	// --- All macros get proper headers ---
 	macroPositions := [][3]any{
@@ -405,7 +423,7 @@ func TestHoverComprehensive(t *testing.T) {
 	}
 	for _, mp := range macroPositions {
 		line, col, name := mp[0].(uint32), mp[1].(uint32), mp[2].(string)
-		requireHoverContains(t, f, line, col, "**Macro**", name+" macro header")
-		requireHoverContains(t, f, line, col, name, name+" macro name")
+		hoverContains(line, col, "**Macro**", name+" macro header")
+		hoverContains(line, col, name, name+" macro name")
 	}
 }
