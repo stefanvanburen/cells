@@ -20,7 +20,9 @@ import (
 var extensionFactories = map[string]func() cel.EnvOption{
 	"bindings":       func() cel.EnvOption { return ext.Bindings() },
 	"comprehensions": func() cel.EnvOption { return ext.TwoVarComprehensions() },
-	"encoders":       func() cel.EnvOption { return ext.Encoders() },
+	// json.parse and yaml.parse return optionals, which are of little use
+	// without the optional library's methods to unwrap them.
+	"encoders": func() cel.EnvOption { return withOptions(cel.OptionalTypes(), ext.Encoders()) },
 	// hmac.Library registers the common algorithms (SHA256/384/512 and their
 	// JOSE aliases) when no explicit set is configured.
 	"hmac": func() cel.EnvOption { return hmac.Library() },

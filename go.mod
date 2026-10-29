@@ -3,8 +3,8 @@ module go.vanburen.xyz/cells
 go 1.27.0
 
 require (
-	cel.dev/cel-go v0.32.0
-	cel.dev/cel-go/ext/security v0.32.0
+	cel.dev/cel-go v0.33.1
+	cel.dev/cel-go/ext/security v0.33.1
 	github.com/antlr4-go/antlr/v4 v4.13.1
 	github.com/bufbuild/protocompile v0.14.2-0.20260917202354-386f9fcfc7b9
 	github.com/pressly/cli v0.8.0

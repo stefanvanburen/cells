@@ -114,7 +114,7 @@ func TestExtensionFactories(t *testing.T) {
 	}{
 		{"bindings", `cel.bind(x, 1, x + 1)`},
 		{"comprehensions", `[1, 2].transformList(i, v, v * 2)`},
-		{"encoders", `base64.encode(b"x")`},
+		{"encoders", `json.parse("1").orValue(0)`},
 		{"hmac", `hmac.compute(b"msg", b"key", hmac.HS256)`},
 		{"jwt", `jwt.parse("a.b.c")`},
 		{"lists", `[1, 2].distinct()`},
