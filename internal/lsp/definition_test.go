@@ -301,6 +301,14 @@ func TestRenameMacroBinding(t *testing.T) {
 			cols: []int{42, 57},
 			want: `cel.bind(o, optional.of(1), o.optFlatMap(w, optional.of(w)))`,
 		},
+		// filter copies x into its result with the declaration's range; the
+		// new name is longer, so editing that range twice would show.
+		{
+			expr: `[1, 2].filter(x, x > 1)`,
+			cols: []int{15, 18},
+			to:   "long",
+			want: `[1, 2].filter(long, long > 1)`,
+		},
 		// The y outside the macro is out of its scope.
 		{
 			expr: `[1].map(x, x) + y`,

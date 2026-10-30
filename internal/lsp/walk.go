@@ -199,9 +199,20 @@ func findExprByID(expr ast.Expr, targetID int64) ast.Expr {
 // References, document highlights and renames all act on exactly this set of
 // ranges, and share this function so that the three cannot disagree about what
 // a name refers to.
+//
+// Each range appears once, though an expansion can copy an identifier, range
+// and all: filter puts the x of [1, 2].filter(x, x > 1) in its result as well
+// as declaring it.
 func identifierOccurrences(expr ast.Expr, sourceInfo *ast.SourceInfo, content string, s scope, identName string) []protocol.Range {
 	var binder int64
 	var ranges []protocol.Range
+	seen := make(map[protocol.Range]bool)
+	add := func(r protocol.Range) {
+		if !seen[r] {
+			seen[r] = true
+			ranges = append(ranges, r)
+		}
+	}
 	if sc, ok := s.(loopVarScope); ok {
 		binder = sc.comprehensionID
 		comp := findExprByID(expr, binder)
@@ -213,7 +224,7 @@ func identifierOccurrences(expr ast.Expr, sourceInfo *ast.SourceInfo, content st
 				continue
 			}
 			if r, ok := rangeOfExpr(content, sourceInfo, decl.ID()); ok {
-				ranges = append(ranges, r)
+				add(r)
 			}
 		}
 	}
@@ -224,7 +235,7 @@ func identifierOccurrences(expr ast.Expr, sourceInfo *ast.SourceInfo, content st
 			return
 		}
 		if r, ok := rangeOfExpr(content, sourceInfo, e.ID()); ok {
-			ranges = append(ranges, r)
+			add(r)
 		}
 	}))
 	return ranges

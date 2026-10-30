@@ -96,6 +96,19 @@ func TestReferences(t *testing.T) {
 			description: "Find references to loop variable in map",
 		},
 
+		// filter's expansion copies the variable into its result, with the
+		// declaration's range, which is still one occurrence.
+		{
+			name:     "filter_loop_var_references",
+			file:     "testdata/references/filter_loop_var.cel",
+			position: protocol.Position{Line: 0, Character: 17},
+			expectedRanges: []protocol.Range{
+				{Start: protocol.Position{Line: 0, Character: 17}, End: protocol.Position{Line: 0, Character: 18}},
+				{Start: protocol.Position{Line: 0, Character: 20}, End: protocol.Position{Line: 0, Character: 21}},
+			},
+			description: "Find references to loop variable in filter",
+		},
+
 		// Empty file
 		{
 			name:           "empty_file",
