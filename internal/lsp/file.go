@@ -1,9 +1,12 @@
 package lsp
 
 import (
+	"slices"
+
 	"cel.dev/cel-go/cel"
 	celast "cel.dev/cel-go/common/ast"
 	"cel.dev/cel-go/common/containers"
+	"cel.dev/cel-go/common/decls"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )
@@ -134,10 +137,10 @@ func (f *file) identifierAt(celEnv *cel.Env, pos protocol.Position) (*celast.AST
 
 // variableOrNil returns nativeAST and info, unless info is an identifier that
 // names something the environment declares rather than a variable: a type
-// like int, the start of a qualified type or enum value like
-// google.protobuf.NullValue.NULL_VALUE, or the namespace of a function like
-// math.greatest. None of those is this file's to rename, and none has
-// occurrences to find beyond its own spelling.
+// like int, the start of a qualified type, enum value or variable like
+// google.protobuf.NullValue.NULL_VALUE or hmac.HS256, or the namespace of a
+// function like math.greatest. None of those is this file's to rename, and
+// none has occurrences to find beyond its own spelling.
 func variableOrNil(celEnv *cel.Env, nativeAST *celast.AST, info *identifierInfo) (*celast.AST, *identifierInfo) {
 	if info.kind != identifierKindTopLevel {
 		return nativeAST, info
@@ -155,6 +158,9 @@ func variableOrNil(celEnv *cel.Env, nativeAST *celast.AST, info *identifierInfo)
 		case e.Kind() == celast.SelectKind && chainRootID(e) == info.exprID:
 			if name, ok := containers.ToQualifiedName(e); ok {
 				_, declared = provider.FindIdent(name)
+				declared = declared || slices.ContainsFunc(celEnv.Variables(), func(v *decls.VariableDecl) bool {
+					return v.Name() == name
+				})
 			}
 		case e.Kind() == celast.CallKind && e.AsCall().IsMemberFunction() && chainRootID(e.AsCall().Target()) == info.exprID:
 			if namespace, ok := containers.ToQualifiedName(e.AsCall().Target()); ok {
