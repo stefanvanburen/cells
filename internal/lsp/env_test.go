@@ -143,6 +143,9 @@ func TestConfigExtensions(t *testing.T) {
 		{"jwt", `jwt.Token{issuer: "a"}.issuer == "a"`},
 		// regex needs optional types installed first, which cells arranges.
 		{"regex", `regex.extract("hello", "h(.*)o").hasValue()`},
+		// cel-go resolves this one itself; optFlatMap is in its newest
+		// version but not its first.
+		{"optional", `optional.of(1).optFlatMap(v, optional.of(v)).hasValue()`},
 	} {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()

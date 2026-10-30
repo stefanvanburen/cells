@@ -1,7 +1,4 @@
 name: optional
 extensions:
-  # cel-go resolves optional itself, and an unversioned entry gets version 0,
-  # which predates optFlatMap.
   - name: optional
-    version: latest
   - name: bindings

@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 	"strings"
 
 	"cel.dev/cel-go/cel"
@@ -140,17 +139,25 @@ func newCELEnv(opts Options) (*cel.Env, map[string]string, error) {
 		}
 		config = loaded
 	}
-	if len(opts.Extensions) > 0 {
-		// Extensions named outside the configuration are added to it, so that
-		// there is one path into the environment rather than two. Copy first:
-		// the caller's configuration is not ours to modify.
-		withExts := *config
-		withExts.Extensions = slices.Clone(config.Extensions)
-		for _, name := range opts.Extensions {
-			withExts.Extensions = append(withExts.Extensions, &env.Extension{Name: name, Version: latestExtensionVersion})
+	// cells supplies the newest version of an extension named without one.
+	// cel-go reads a missing version as version 0, and resolves optional
+	// itself without asking extensionOptionFactory, so the version is filled
+	// in before cel-go sees the configuration. Extensions named outside the
+	// configuration are added to it, so that there is one path into the
+	// environment rather than two. Copy first: the caller's configuration is
+	// not ours to modify.
+	withExts := *config
+	withExts.Extensions = make([]*env.Extension, 0, len(config.Extensions)+len(opts.Extensions))
+	for _, extension := range config.Extensions {
+		if _, ok := extensionFactories[extension.Name]; ok && extension.Version == "" {
+			extension = &env.Extension{Name: extension.Name, Version: latestExtensionVersion}
 		}
-		config = &withExts
+		withExts.Extensions = append(withExts.Extensions, extension)
 	}
+	for _, name := range opts.Extensions {
+		withExts.Extensions = append(withExts.Extensions, &env.Extension{Name: name, Version: latestExtensionVersion})
+	}
+	config = &withExts
 
 	envOpts = append(envOpts,
 		cel.FromConfig(config, extensionOptionFactory),
@@ -231,5 +238,5 @@ func cellsOwnsExtension(extension *env.Extension) bool {
 	if _, ok := extensionFactories[extension.Name]; !ok {
 		return false
 	}
-	return extension.Version == "" || extension.Version == latestExtensionVersion
+	return extension.Version == latestExtensionVersion
 }

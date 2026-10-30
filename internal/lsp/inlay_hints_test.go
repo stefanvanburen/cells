@@ -130,9 +130,7 @@ func TestInlayHintsLoopVariableTypes(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			// cel-go resolves optional itself, and an unversioned entry gets
-			// version 0, which predates optFlatMap.
-			config := "name: test\nvariables:\n  - name: request\n    type: \"map<string, dyn>\"\nextensions:\n  - name: bindings\n  - name: comprehensions\n  - name: optional\n    version: latest\n"
+			config := "name: test\nvariables:\n  - name: request\n    type: \"map<string, dyn>\"\nextensions:\n  - name: bindings\n  - name: comprehensions\n  - name: optional\n"
 			ok.MustNoError(t, os.WriteFile(filepath.Join(dir, lsp.ConfigFileName), []byte(config), 0o600))
 			path := filepath.Join(dir, "test.cel")
 			ok.MustNoError(t, os.WriteFile(path, []byte(tt.src), 0o600))
