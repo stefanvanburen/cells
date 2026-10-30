@@ -405,6 +405,11 @@ func TestCompletionAfterToken(t *testing.T) {
 			wantPresent: []string{"x", "size"},
 		},
 		{
+			name:        "in optMap body",
+			file:        "testdata/optional/in_opt_map_body.cel",
+			wantPresent: []string{"v"},
+		},
+		{
 			name:        "in macro body",
 			file:        "testdata/completion/in_macro_body.cel",
 			wantPresent: []string{"x"},

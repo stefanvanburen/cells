@@ -1,0 +1,1 @@
+cel.bind(o, optional.of(1), o.optFlatMap(v, optional.of(v)))

@@ -190,7 +190,7 @@ func collectBoundHovers(
 	}
 	root, sourceInfo := nativeAST.Expr(), nativeAST.SourceInfo()
 	macroOf := func(comp int64) string {
-		call, _ := sourceInfo.GetMacroCall(comp)
+		call, _ := macroCallOf(sourceInfo, comp)
 		return call.AsCall().FunctionName()
 	}
 

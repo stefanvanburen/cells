@@ -122,13 +122,17 @@ func TestInlayHintsLoopVariableTypes(t *testing.T) {
 		{"multiline", "[1].map(\n  x,\n  x * 2\n)", []string{"2:4 : int"}},
 		// The body is the variable itself, which is a use, not a declaration.
 		{"identity", "[1].map(x, x)", []string{"1:10 : int"}},
+		{"opt_map", "optional.of(1).optMap(v, v + 1)", []string{"1:24 : int"}},
+		{"opt_flat_map", "cel.bind(o, optional.of(1), o.optFlatMap(v, optional.of(v)))", []string{"1:11 : optional_type(int)", "1:43 : int"}},
 		{"does_not_check", "[1].all(x, x > undeclared)", nil},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 			dir := t.TempDir()
-			config := "name: test\nvariables:\n  - name: request\n    type: \"map<string, dyn>\"\nextensions:\n  - name: bindings\n  - name: comprehensions\n"
+			// cel-go resolves optional itself, and an unversioned entry gets
+			// version 0, which predates optFlatMap.
+			config := "name: test\nvariables:\n  - name: request\n    type: \"map<string, dyn>\"\nextensions:\n  - name: bindings\n  - name: comprehensions\n  - name: optional\n    version: latest\n"
 			ok.MustNoError(t, os.WriteFile(filepath.Join(dir, lsp.ConfigFileName), []byte(config), 0o600))
 			path := filepath.Join(dir, "test.cel")
 			ok.MustNoError(t, os.WriteFile(path, []byte(tt.src), 0o600))

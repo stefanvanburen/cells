@@ -53,8 +53,11 @@ func exprByteRange(content string, sourceInfo *ast.SourceInfo, id int64) (byteSt
 // parser keeps is the call the macro was written as, whose leading arguments
 // are those declarations, with source ranges of their own.
 func macroDeclarations(sourceInfo *ast.SourceInfo, comp ast.Expr) []ast.Expr {
-	call, retained := sourceInfo.GetMacroCall(comp.ID())
-	if comp.Kind() != ast.ComprehensionKind || !retained || call.Kind() != ast.CallKind {
+	if comp.Kind() != ast.ComprehensionKind {
+		return nil
+	}
+	call, retained := macroCallOf(sourceInfo, comp.ID())
+	if !retained || call.Kind() != ast.CallKind {
 		return nil
 	}
 	c := comp.AsComprehension()
@@ -74,6 +77,31 @@ func macroDeclarations(sourceInfo *ast.SourceInfo, comp ast.Expr) []ast.Expr {
 		}
 	}
 	return decls
+}
+
+// macroCallOf returns the call that the macro whose expansion produced the
+// comprehension with the given ID was written as.
+//
+// Most macros expand to the comprehension that binds their names, and the
+// parser records the call against it. optMap and optFlatMap bind theirs in a
+// comprehension nested within their expansion, and the call is recorded
+// against the expansion's root. Everything an expansion synthesizes is placed
+// at the macro's position, which no other macro shares, so the nested
+// comprehension is matched to the call recorded at its own position.
+func macroCallOf(sourceInfo *ast.SourceInfo, id int64) (ast.Expr, bool) {
+	if call, ok := sourceInfo.GetMacroCall(id); ok {
+		return call, true
+	}
+	offset, ok := sourceInfo.GetOffsetRange(id)
+	if !ok {
+		return nil, false
+	}
+	for callID, call := range sourceInfo.MacroCalls() {
+		if callOffset, ok := sourceInfo.GetOffsetRange(callID); ok && callOffset == offset {
+			return call, true
+		}
+	}
+	return nil, false
 }
 
 // nameBindings maps each identifier in the expression rooted at root that a

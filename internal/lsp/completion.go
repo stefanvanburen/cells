@@ -214,7 +214,7 @@ func boundNamesAt(before string, tokens []celToken, celEnv *cel.Env) map[string]
 		}
 		for _, decl := range macroDeclarations(sourceInfo, comp) {
 			if decl.AsIdent() == name {
-				call, _ := sourceInfo.GetMacroCall(id)
+				call, _ := macroCallOf(sourceInfo, id)
 				bound[name] = call.AsCall().FunctionName()
 			}
 		}

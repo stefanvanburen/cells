@@ -179,6 +179,13 @@ func TestHover(t *testing.T) {
 		{name: "comp_var_declaration", file: "testdata/hover/comp_var.cel", line: 0, char: 14, contains: "`x`: `int`\n\nBound by `all`.", desc: "'x' where all declares it"},
 		{name: "comp_var_unused", file: "testdata/hover/unused_comp_var.cel", line: 0, char: 8, contains: "`x`: `int`\n\nBound by `map`.", desc: "'x' that map declares and nothing uses"},
 		{name: "comp_var_use", file: "testdata/hover/comp_var.cel", line: 0, char: 17, contains: "`x`: `int`\n\nBound by `all`.", desc: "'x' where all uses it"},
+		// optMap and optFlatMap bind their variable in a comprehension nested
+		// within their expansion, which is a comprehension of its own when the
+		// receiver is a call and a conditional when it is a name.
+		{name: "opt_map_var_declaration", file: "testdata/optional/opt_map.cel", line: 0, char: 22, contains: "`v`: `int`\n\nBound by `optMap`.", desc: "'v' where optMap declares it"},
+		{name: "opt_map_var_use", file: "testdata/optional/opt_map.cel", line: 0, char: 25, contains: "`v`: `int`\n\nBound by `optMap`.", desc: "'v' where optMap uses it"},
+		{name: "opt_flat_map_var_declaration", file: "testdata/optional/opt_flat_map.cel", line: 0, char: 41, contains: "`v`: `int`\n\nBound by `optFlatMap`.", desc: "'v' where optFlatMap declares it"},
+		{name: "opt_flat_map_var_use", file: "testdata/optional/opt_flat_map.cel", line: 0, char: 56, contains: "`v`: `int`\n\nBound by `optFlatMap`.", desc: "'v' where optFlatMap uses it"},
 
 		// Empty file tests (no hover)
 		{name: "empty_file_no_hover", file: "testdata/semantic_tokens/empty.cel", line: 0, char: 0, contains: "", desc: "empty file — no hover"},

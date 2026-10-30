@@ -159,6 +159,8 @@ func TestDefinitionOfAMacroBinding(t *testing.T) {
 		// cel.bind(v, 1 + 1, v * v) — the use at 20 is bound at 10.
 		{"cel_bind_from_use", "cel.bind(v, 1 + 1, v * v)", []string{"bindings"}, 20, 10},
 		{"cel_bind_from_declaration", "cel.bind(v, 1 + 1, v * v)", []string{"bindings"}, 10, 10},
+		{"opt_map_from_use", "optional.of(1).optMap(v, v + 1)", []string{"optional"}, 26, 23},
+		{"opt_flat_map_from_use", "cel.bind(o, optional.of(1), o.optFlatMap(v, optional.of(v)))", []string{"optional", "bindings"}, 57, 42},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -289,6 +291,16 @@ func TestRenameMacroBinding(t *testing.T) {
 			cols: []int{17, 20},
 			want: `{'a': 1}.all(k, w, w > 0 && k != '')`,
 		},
+		{
+			expr: `optional.of(1).optMap(v, v + 1)`,
+			cols: []int{23, 26},
+			want: `optional.of(1).optMap(w, w + 1)`,
+		},
+		{
+			expr: `cel.bind(o, optional.of(1), o.optFlatMap(v, optional.of(v)))`,
+			cols: []int{42, 57},
+			want: `cel.bind(o, optional.of(1), o.optFlatMap(w, optional.of(w)))`,
+		},
 		// The y outside the macro is out of its scope.
 		{
 			expr: `[1].map(x, x) + y`,
@@ -302,7 +314,7 @@ func TestRenameMacroBinding(t *testing.T) {
 		{expr: `[1].map(y, x + y)`, cols: []int{12}, to: "y", conflict: true},
 		{expr: `[1].map(x, [2].map(y, x + y))`, cols: []int{9}, to: "y", conflict: true},
 	}
-	opts := lsp.Options{Extensions: []string{"bindings", "comprehensions"}}
+	opts := lsp.Options{Extensions: []string{"bindings", "comprehensions", "optional"}}
 	for _, tt := range tests {
 		to := cmp.Or(tt.to, "w")
 		for _, col := range tt.cols {
