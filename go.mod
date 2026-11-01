@@ -12,7 +12,7 @@ require (
 	go.lsp.dev/protocol v1.0.1
 	go.lsp.dev/uri v1.0.1
 	go.vanburen.xyz/ok v0.8.0
-	go.yaml.in/yaml/v3 v3.0.5
+	go.yaml.in/yaml/v3 v3.0.6
 	google.golang.org/protobuf v1.36.12
 	znkr.io/diff v1.0.1
 )
