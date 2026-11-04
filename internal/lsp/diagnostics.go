@@ -146,9 +146,56 @@ func issuesToDiagnostics(content string, issues *cel.Issues, severity protocol.D
 // operatorNameRe matches quoted cel-go internal operator names like '_+_', '-_', '!_', '@in'.
 var operatorNameRe = regexp.MustCompile(`'([^']+)'`)
 
+// undeclaredRe matches cel-go's undeclared-reference message, capturing the
+// name and the parenthesized hint, if any, that follows it.
+var undeclaredRe = regexp.MustCompile(`^(undeclared reference to '([^']+)')(?: \((.*)\))?$`)
+
+// suggestionRe matches the hint cel-go gives for a name in a library the
+// environment lacks: the suggested name, then the Go option enabling it.
+var suggestionRe = regexp.MustCompile("^did you mean '([^']+)'\\?, enable with `[^`]*`$")
+
 // cleanMessage rewrites cel-go internal operator names to user-friendly forms
-// using operators.FindReverse.
+// using operators.FindReverse, and names the cells extension that declares an
+// undeclared reference.
 func cleanMessage(msg string) string {
+	return extensionHint(cleanOperators(msg))
+}
+
+// extensionHint replaces the hint on an undeclared-reference message with the
+// cells extensions that declare the name, or the name cel-go suggests instead.
+// cel-go's own hint names a Go option, which a cells user cannot act on.
+func extensionHint(msg string) string {
+	m := undeclaredRe.FindStringSubmatch(msg)
+	if m == nil {
+		return msg
+	}
+	if exts := extensionsByName()[m[2]]; len(exts) > 0 {
+		return m[1] + " (" + enableExtensions(exts) + ")"
+	}
+	if s := suggestionRe.FindStringSubmatch(m[3]); s != nil {
+		if exts := extensionsByName()[s[1]]; len(exts) > 0 {
+			return m[1] + " (did you mean '" + s[1] + "'?, " + enableExtensions(exts) + ")"
+		}
+	}
+	return msg
+}
+
+// enableExtensions phrases the advice to enable one of exts.
+func enableExtensions(exts []string) string {
+	quoted := make([]string, len(exts))
+	for i, ext := range exts {
+		quoted[i] = "`" + ext + "`"
+	}
+	noun := "extension"
+	if len(exts) > 1 {
+		noun = "extensions"
+	}
+	return "enable the " + strings.Join(quoted, " or ") + " " + noun
+}
+
+// cleanOperators rewrites cel-go internal operator names to user-friendly
+// forms using operators.FindReverse.
+func cleanOperators(msg string) string {
 	return operatorNameRe.ReplaceAllStringFunc(msg, func(match string) string {
 		// Strip surrounding quotes.
 		symbol := match[1 : len(match)-1]

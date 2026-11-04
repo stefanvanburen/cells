@@ -137,6 +137,15 @@ func TestDiagnosticsTypeCheckErrors(t *testing.T) {
 		{"three undeclared", "three_undeclared.cel", "undeclared reference", "", 3},
 		{"undeclared with select", "undeclared_select.cel", "undeclared reference to 'x'", "", 0},
 
+		// Undeclared names an extension provides
+		{"strings method", "needs_strings_method.cel", "undeclared reference to 'upperAscii' (enable the `strings` extension)", "", 1},
+		{"strings namespace", "needs_strings_namespace.cel", "undeclared reference to 'strings' (enable the `strings` extension)", "did you mean", 0},
+		{"math namespace", "needs_math.cel", "undeclared reference to 'math' (enable the `math` extension)", "", 0},
+		{"lists method", "needs_lists.cel", "undeclared reference to 'hasAny' (enable the `lists` extension)", "", 1},
+		{"optional function", "needs_optional.cel", "undeclared reference to 'optional.of' (enable the `optional` extension)", "cel.OptionalTypes()", 1},
+		{"optional macro", "needs_optional_macro.cel", "undeclared reference to 'optMap' (enable the `optional` extension)", "cel.OptionalTypes()", 0},
+		{"bindings macro", "needs_bindings.cel", "undeclared reference to 'bind' (enable the `bindings` extension)", "`comprehensions`", 0},
+
 		// Arithmetic type mismatches (cleaned operator names)
 		{"int + string", "int_plus_string.cel", "found no matching overload for '+' applied to '(int, string)'", "'_+_'", 1},
 		{"bool + int", "bool_plus_int.cel", "found no matching overload for '+'", "'_+_'", 0},

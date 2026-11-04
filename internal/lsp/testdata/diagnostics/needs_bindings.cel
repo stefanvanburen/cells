@@ -1,0 +1,1 @@
+cel.bind(x, 1, x)

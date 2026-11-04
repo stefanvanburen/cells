@@ -2,6 +2,8 @@ package lsp
 
 import (
 	"slices"
+	"strings"
+	"sync"
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/ext"
@@ -78,4 +80,78 @@ func resolveExtensions(names []string) ([]cel.EnvOption, error) {
 		opts = append(opts, factory())
 	}
 	return opts, nil
+}
+
+// extensionsByName maps each function, macro, and function namespace an
+// extension declares, and the base environment does not, to the extensions
+// that declare it. An extension that installs another (as regex installs
+// optional) is left out for the names it gets that way.
+var extensionsByName = sync.OnceValue(func() map[string][]string {
+	base, err := cel.NewEnv()
+	if err != nil {
+		return nil
+	}
+	baseNames := envNames(base)
+	added := make(map[string]map[string]bool, len(extensionFactories))
+	for ext, factory := range extensionFactories {
+		e, err := cel.NewEnv(factory())
+		if err != nil {
+			continue
+		}
+		names := envNames(e)
+		for name := range baseNames {
+			delete(names, name)
+		}
+		added[ext] = names
+	}
+	index := make(map[string][]string)
+	for ext, names := range added {
+		for name := range names {
+			index[name] = append(index[name], ext)
+		}
+	}
+	for name, exts := range index {
+		index[name] = slices.DeleteFunc(slices.Clone(exts), func(ext string) bool {
+			return slices.ContainsFunc(exts, func(other string) bool {
+				return other != ext && isSubset(added[other], added[ext])
+			})
+		})
+		slices.Sort(index[name])
+	}
+	return index
+})
+
+// envNames returns the names of e's functions and macros, along with every
+// namespace prefix of a qualified function name ("math" for "math.greatest").
+// Internal functions, whose final segment starts with "@", are left out.
+func envNames(e *cel.Env) map[string]bool {
+	names := make(map[string]bool)
+	for name := range e.Functions() {
+		if strings.HasPrefix(name[strings.LastIndex(name, ".")+1:], "@") {
+			continue
+		}
+		names[name] = true
+		for i, r := range name {
+			if r == '.' {
+				names[name[:i]] = true
+			}
+		}
+	}
+	for _, m := range e.Macros() {
+		names[m.Function()] = true
+	}
+	return names
+}
+
+// isSubset reports whether a is a proper subset of b.
+func isSubset(a, b map[string]bool) bool {
+	if len(a) >= len(b) {
+		return false
+	}
+	for name := range a {
+		if !b[name] {
+			return false
+		}
+	}
+	return true
 }
