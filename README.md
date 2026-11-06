@@ -46,11 +46,13 @@ $ cells format --diff --write file.cel
 
 Check CEL source files for parse and type errors, plus invalid `duration()`,
 `timestamp()`, and `matches()` literal arguments.
-Prints `file:line:col: severity: message` for each diagnostic and exits 1 if any are found.
+Prints `file:line:col: severity: message` for each diagnostic.
+A file named `-` is read from stdin and reported as `<stdin>`.
 
 ```console
 $ cells check file.cel
 $ cells check *.cel
+$ echo "1 + 'x'" | cells check -
 ```
 
 Type errors are reported as warnings unless [an environment](#environment) is
@@ -115,6 +117,15 @@ go       go1.27.1
 A binary installed from a module tag reports that tag and carries no revision.
 One built from a checkout reports the revision it came from, marked when the
 tree had uncommitted changes.
+
+### Exit codes
+
+Like `diff` and `grep`, every command exits 0 when there is nothing to report
+and 1 when there is: a diagnostic from `check`, a difference from
+`format --diff`, or a file `format` cannot parse (reported in the same form as
+`check`). It exits 2 when it could not do what was asked, such as for a misused
+flag, an unreadable file, or a configuration that does not load; when one file
+of several cannot be read, the others are still checked.
 
 ## Environment
 

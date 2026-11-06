@@ -20,14 +20,36 @@ func ValidateExtensions(names []string) error {
 	return err
 }
 
-// Format formats the given CEL content.
-// Returns the original content unchanged if formatting is not possible (e.g., parse errors).
+// Format formats the given CEL content. Content that does not parse is
+// reported as a [*ParseError].
 func Format(content string, opts Options) (string, error) {
 	docEnv, err := newEnvironment(opts)
 	if err != nil {
 		return "", err
 	}
-	return formatCEL(content, docEnv.celEnv)
+	formatted, err := formatCEL(content, docEnv.celEnv)
+	if err != nil {
+		if _, issues := docEnv.celEnv.Parse(content); issues.Err() != nil {
+			return "", &ParseError{
+				Diagnostics: toCheckDiagnostics(issuesToDiagnostics(content, issues, protocol.DiagnosticSeverityError)),
+			}
+		}
+		return "", err
+	}
+	return formatted, nil
+}
+
+// ParseError reports that content did not parse, as the diagnostics [Check]
+// would give for it.
+type ParseError struct {
+	Diagnostics []CheckDiagnostic
+}
+
+func (e *ParseError) Error() string {
+	if len(e.Diagnostics) == 0 {
+		return "syntax error"
+	}
+	return e.Diagnostics[0].Message
 }
 
 // cliURI stands in for a document URI when these entry points are called from
@@ -52,7 +74,11 @@ func Check(content string, opts Options) ([]CheckDiagnostic, error) {
 	if err != nil {
 		return nil, err
 	}
-	diags := computeDiagnostics(&file{uri: cliURI, content: content}, docEnv.celEnv, docEnv.checkSeverity)
+	return toCheckDiagnostics(computeDiagnostics(&file{uri: cliURI, content: content}, docEnv.celEnv, docEnv.checkSeverity)), nil
+}
+
+// toCheckDiagnostics converts LSP diagnostics to their command-line form.
+func toCheckDiagnostics(diags []protocol.Diagnostic) []CheckDiagnostic {
 	result := make([]CheckDiagnostic, 0, len(diags))
 	for _, d := range diags {
 		sev := "error"
@@ -69,7 +95,7 @@ func Check(content string, opts Options) ([]CheckDiagnostic, error) {
 			Message:  string(message),
 		})
 	}
-	return result, nil
+	return result
 }
 
 // Hover returns hover documentation for the element at the given 1-indexed line:col position.

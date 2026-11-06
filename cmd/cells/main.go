@@ -8,6 +8,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -18,14 +19,31 @@ import (
 	"znkr.io/diff/textdiff"
 )
 
+// The exit codes follow diff and grep: 0 when there is nothing to report,
+// exitFindings when the input has problems to report, and exitTrouble when
+// cells could not do what it was asked, such as for a misused flag, an
+// unreadable file, or a configuration that does not load.
+const (
+	exitFindings = 1
+	exitTrouble  = 2
+)
+
 func main() {
-	if err := cli.ParseAndRun(context.Background(), rootCommand(), os.Args[1:], nil); err != nil {
-		if exitErr, ok := errors.AsType[*exitError](err); ok {
-			os.Exit(exitErr.code)
-		}
-		fmt.Fprintf(os.Stderr, "error: %v\n", err)
-		os.Exit(1)
+	err := cli.ParseAndRun(context.Background(), rootCommand(), os.Args[1:], nil)
+	os.Exit(exitCode(err, os.Stderr))
+}
+
+// exitCode returns the code to exit with after a run that returned err,
+// reporting err on stderr unless it is an [*exitError].
+func exitCode(err error, stderr io.Writer) int {
+	if err == nil {
+		return 0
 	}
+	if exitErr, ok := errors.AsType[*exitError](err); ok {
+		return exitErr.code
+	}
+	fmt.Fprintf(stderr, "error: %v\n", err)
+	return exitTrouble
 }
 
 // rootCommand builds the cells command tree. It is a function rather than a
@@ -92,13 +110,43 @@ func optionsFor(opts lsp.Options, filename string) lsp.Options {
 	return opts
 }
 
-// exitError is returned by commands that want to exit with a specific code
-// without printing an additional error message.
+// exitError is returned by commands that have already reported what went
+// wrong, and only need to exit with code.
 type exitError struct {
 	code int
 }
 
 func (e *exitError) Error() string { return "" }
+
+// stdinName is how input read from stdin is named in what cells reports.
+const stdinName = "<stdin>"
+
+// checkInputs reports a usage error when more than one of args names stdin,
+// since only one of them could read it.
+func checkInputs(command string, args []string) error {
+	if i := slices.Index(args, "-"); i >= 0 && slices.Contains(args[i+1:], "-") {
+		return fmt.Errorf("%s: stdin (-) can be named only once", command)
+	}
+	return nil
+}
+
+// readInput returns the content of the named file, or of stdin when filename
+// is "-", along with the name to report it by.
+func readInput(s *cli.State, filename string) (name, content string, err error) {
+	if filename == "-" {
+		b, err := io.ReadAll(s.Stdin)
+		return stdinName, string(b), err
+	}
+	b, err := os.ReadFile(filename)
+	return filename, string(b), err
+}
+
+// printDiagnostics writes each diagnostic as file:line:col: severity: message.
+func printDiagnostics(w io.Writer, name string, diags []lsp.CheckDiagnostic) {
+	for _, d := range diags {
+		fmt.Fprintf(w, "%s:%d:%d: %s: %s\n", name, d.Line, d.Col, d.Severity, d.Message)
+	}
+}
 
 func versionCommand() *cli.Command {
 	return &cli.Command{
@@ -149,57 +197,48 @@ func formatCommand() *cli.Command {
 			if len(s.Args) == 0 {
 				s.Args = []string{"-"}
 			}
+			if err := checkInputs("format", s.Args); err != nil {
+				return err
+			}
+			if writeBack && slices.Contains(s.Args, "-") {
+				return errors.New("format: cannot use --write with stdin")
+			}
 
-			exitCode := 0
+			code := 0
 			for _, filename := range s.Args {
-				var content []byte
-				var err error
-				if filename == "-" {
-					content, err = io.ReadAll(s.Stdin)
-					if err != nil {
-						fmt.Fprintf(s.Stderr, "<stdin>: %v\n", err)
-						exitCode = 1
-						continue
-					}
-				} else {
-					content, err = os.ReadFile(filename)
-					if err != nil {
-						fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
-						exitCode = 1
-						continue
-					}
-				}
-				formatted, err := lsp.Format(string(content), optionsFor(opts, filename))
+				name, content, err := readInput(s, filename)
 				if err != nil {
-					fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
-					exitCode = 1
+					fmt.Fprintf(s.Stderr, "%s: %v\n", name, err)
+					code = max(code, exitTrouble)
 					continue
 				}
-				if showDiff {
-					if formatted != string(content) {
-						fmt.Fprint(s.Stdout, diffUnified(filename, string(content), formatted))
-						exitCode = 1
-					}
+				formatted, err := lsp.Format(content, optionsFor(opts, filename))
+				if parseErr, ok := errors.AsType[*lsp.ParseError](err); ok {
+					printDiagnostics(s.Stderr, name, parseErr.Diagnostics)
+					code = max(code, exitFindings)
+					continue
 				}
-				if writeBack {
-					if filename == "-" {
-						fmt.Fprintf(s.Stderr, "format: cannot use --write with stdin\n")
-						exitCode = 1
-						continue
-					}
-					if formatted != string(content) {
-						if err := os.WriteFile(filename, []byte(formatted), 0o644); err != nil {
-							fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
-							exitCode = 1
-						}
+				if err != nil {
+					fmt.Fprintf(s.Stderr, "%s: %v\n", name, err)
+					code = max(code, exitTrouble)
+					continue
+				}
+				if showDiff && formatted != content {
+					fmt.Fprint(s.Stdout, diffUnified(name, content, formatted))
+					code = max(code, exitFindings)
+				}
+				if writeBack && formatted != content {
+					if err := os.WriteFile(filename, []byte(formatted), 0o644); err != nil {
+						fmt.Fprintf(s.Stderr, "%s: %v\n", name, err)
+						code = max(code, exitTrouble)
 					}
 				}
 				if !showDiff && !writeBack {
 					fmt.Fprint(s.Stdout, formatted)
 				}
 			}
-			if exitCode != 0 {
-				return &exitError{exitCode}
+			if code != 0 {
+				return &exitError{code}
 			}
 			return nil
 		},
@@ -210,36 +249,39 @@ func checkCommand() *cli.Command {
 	return &cli.Command{
 		Name:    "check",
 		Summary: "Check CEL source files for parse and type errors",
-		Usage:   "cells check <file> [file...]",
+		Usage:   "cells check <file|-> [file...]",
 		Exec: func(_ context.Context, s *cli.State) error {
 			opts, err := options(s)
 			if err != nil {
 				return err
 			}
 			if len(s.Args) == 0 {
-				return fmt.Errorf("check: no files specified")
+				return errors.New("check: no files specified")
 			}
-			exitCode := 0
+			if err := checkInputs("check", s.Args); err != nil {
+				return err
+			}
+			code := 0
 			for _, filename := range s.Args {
-				content, err := os.ReadFile(filename)
+				name, content, err := readInput(s, filename)
 				if err != nil {
-					fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
-					exitCode = 1
+					fmt.Fprintf(s.Stderr, "%s: %v\n", name, err)
+					code = max(code, exitTrouble)
 					continue
 				}
-				diags, err := lsp.Check(string(content), optionsFor(opts, filename))
+				diags, err := lsp.Check(content, optionsFor(opts, filename))
 				if err != nil {
-					fmt.Fprintf(s.Stderr, "%s: %v\n", filename, err)
-					exitCode = 1
+					fmt.Fprintf(s.Stderr, "%s: %v\n", name, err)
+					code = max(code, exitTrouble)
 					continue
 				}
-				for _, d := range diags {
-					fmt.Fprintf(s.Stdout, "%s:%d:%d: %s: %s\n", filename, d.Line, d.Col, d.Severity, d.Message)
-					exitCode = 1
+				printDiagnostics(s.Stdout, name, diags)
+				if len(diags) > 0 {
+					code = max(code, exitFindings)
 				}
 			}
-			if exitCode != 0 {
-				return &exitError{exitCode}
+			if code != 0 {
+				return &exitError{code}
 			}
 			return nil
 		},
