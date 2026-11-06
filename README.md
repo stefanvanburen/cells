@@ -32,6 +32,9 @@ In addition to operating as a language server, `cells` provides CLI commands for
 
 Format CEL source files.
 With no arguments, reads from stdin and writes to stdout.
+`--write` replaces a file by renaming a new copy over it, so an interrupted
+write leaves the original whole; a symlink is kept and the file it points to
+is replaced.
 
 ```console
 $ echo "1+2" | cells format
@@ -104,7 +107,7 @@ $ cells rename --new-name=newVar --write file.cel:1:1
 ### `cells version`
 
 Show what this binary was built from. The Go toolchain records it; nothing is
-stamped by hand.
+stamped by hand. `cells --version` prints the same.
 
 ```console
 $ cells version

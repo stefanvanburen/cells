@@ -57,7 +57,18 @@ func rootCommand() *cli.Command {
 			f.Var(flagtype.StringSlice(), "ext", "enable a CEL extension library (repeatable); one of: "+strings.Join(lsp.ExtensionNames(), ", "))
 			f.String("config", "", "path to a CEL environment configuration declaring variables and types")
 			f.Var(flagtype.StringSlice(), "descriptor-set", "path to an encoded FileDescriptorSet making its message types resolvable (repeatable)")
+			f.Bool("version", false, "show what this binary was built from, as the version command does")
 		}),
+		FlagConfigs: []cli.FlagConfig{
+			{Name: "version", Local: true},
+		},
+		Exec: func(_ context.Context, s *cli.State) error {
+			if !s.GetFlag[bool]("version") {
+				return cli.UsageErrorf("subcommand required")
+			}
+			_, err := io.WriteString(s.Stdout, version.Detail())
+			return err
+		},
 		SubCommands: []*cli.Command{
 			serveCommand(),
 			formatCommand(),
@@ -87,7 +98,7 @@ func options(s *cli.State) (lsp.Options, error) {
 	}
 	if opts.ConfigPath != "" {
 		if _, err := lsp.LoadConfig(opts.ConfigPath); err != nil {
-			return lsp.Options{}, err
+			return lsp.Options{}, fmt.Errorf("--config: %w", err)
 		}
 	}
 	return opts, nil
@@ -228,7 +239,7 @@ func formatCommand() *cli.Command {
 					code = max(code, exitFindings)
 				}
 				if writeBack && formatted != content {
-					if err := os.WriteFile(filename, []byte(formatted), 0o644); err != nil {
+					if err := replaceFile(filename, formatted); err != nil {
 						fmt.Fprintf(s.Stderr, "%s: %v\n", name, err)
 						code = max(code, exitTrouble)
 					}
@@ -425,7 +436,7 @@ func renameCommand() *cli.Command {
 				return fmt.Errorf("rename: %w", err)
 			}
 			if writeBack {
-				return os.WriteFile(filename, []byte(result), 0o644)
+				return replaceFile(filename, result)
 			}
 			fmt.Fprint(s.Stdout, result)
 			return nil
@@ -466,4 +477,40 @@ func diffUnified(filename, original, formatted string) string {
 		return ""
 	}
 	return fmt.Sprintf("--- %s\n+++ %s\n%s", filename, filename, d)
+}
+
+// replaceFile replaces the content of the named file by renaming a temporary
+// file over it, so that an interrupted write leaves the original whole. A
+// symlink is followed and kept, so the file it points to is the one replaced,
+// and that file keeps its permissions.
+func replaceFile(name, content string) (retErr error) {
+	target, err := filepath.EvalSymlinks(name)
+	if err != nil {
+		return err
+	}
+	info, err := os.Stat(target)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".*")
+	if err != nil {
+		return err
+	}
+	defer func() {
+		if retErr != nil {
+			_ = os.Remove(tmp.Name())
+		}
+	}()
+	if _, err := tmp.WriteString(content); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(info.Mode().Perm()); err != nil {
+		_ = tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), target)
 }

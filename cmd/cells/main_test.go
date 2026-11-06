@@ -70,6 +70,19 @@ func TestVersion(t *testing.T) {
 	ok.Equal(t, stderr, "")
 	ok.True(t, strings.HasPrefix(stdout, "cells    "), ok.Sprintf("stdout: %q", stdout))
 	ok.True(t, strings.Contains(stdout, "\ngo       go1."), ok.Sprintf("stdout: %q", stdout))
+
+	// --version prints the same, and belongs to the root alone.
+	flagOut, stderr, code := run(t, "", "--version")
+	ok.Equal(t, code, 0)
+	ok.Equal(t, stderr, "")
+	ok.Equal(t, flagOut, stdout)
+	_, _, code = run(t, "", "check", "--version")
+	ok.Equal(t, code, 2)
+
+	// Without it, the root still wants a subcommand.
+	_, stderr, code = run(t, "")
+	ok.Equal(t, code, 2)
+	ok.True(t, strings.HasSuffix(stderr, "error: subcommand required\n"), ok.Sprintf("stderr: %q", stderr))
 }
 
 func TestFormatStdin(t *testing.T) {
@@ -97,13 +110,39 @@ func TestFormatFile(t *testing.T) {
 func TestFormatWrite(t *testing.T) {
 	t.Parallel()
 
-	path := writeFile(t, "a.cel", "1+2")
+	dir := t.TempDir()
+	path := filepath.Join(dir, "a.cel")
+	ok.MustNoError(t, os.WriteFile(path, []byte("1+2"), 0o640))
+	link := filepath.Join(dir, "link.cel")
+	ok.MustNoError(t, os.Symlink("a.cel", link))
+	before, err := os.Stat(path)
+	ok.MustNoError(t, err)
 
 	stdout, stderr, code := run(t, "", "format", "--write", path)
 	ok.Equal(t, stdout, "")
 	ok.Equal(t, stderr, "")
 	ok.Equal(t, code, 0)
 	ok.Equal(t, readFile(t, path), "1 + 2")
+
+	// The file is replaced by a rename, not rewritten in place, so an
+	// interrupted write cannot leave it partial. It keeps its permissions,
+	// and nothing else is left in its directory.
+	after, err := os.Stat(path)
+	ok.MustNoError(t, err)
+	ok.True(t, !os.SameFile(before, after))
+	ok.Equal(t, after.Mode().Perm(), os.FileMode(0o640))
+	entries, err := os.ReadDir(dir)
+	ok.MustNoError(t, err)
+	ok.Equal(t, len(entries), 2)
+
+	// Through a symlink, the file it points to is replaced and the link kept.
+	ok.MustNoError(t, os.WriteFile(path, []byte("3+4"), 0o640))
+	_, _, code = run(t, "", "format", "--write", link)
+	ok.Equal(t, code, 0)
+	ok.Equal(t, readFile(t, path), "3 + 4")
+	target, err := os.Readlink(link)
+	ok.MustNoError(t, err)
+	ok.Equal(t, target, "a.cel")
 }
 
 func TestFormatWriteStdin(t *testing.T) {
@@ -327,10 +366,17 @@ func TestRenameWrite(t *testing.T) {
 
 	path := writeFile(t, "a.cel", "x + x")
 
+	before, err := os.Stat(path)
+	ok.MustNoError(t, err)
+
 	stdout, _, code := run(t, "", "rename", "--new-name", "y", "--write", path+":1:1")
 	ok.Equal(t, stdout, "")
 	ok.Equal(t, code, 0)
 	ok.Equal(t, readFile(t, path), "y + y")
+	// Like format --write, the file is replaced rather than rewritten.
+	after, err := os.Stat(path)
+	ok.MustNoError(t, err)
+	ok.True(t, !os.SameFile(before, after))
 }
 
 func TestRenameRequiresNewName(t *testing.T) {
@@ -554,7 +600,8 @@ func TestConfigErrors(t *testing.T) {
 
 		_, stderr, code := run(t, "", "check", "--config", "no-such-config.yaml", cel)
 		ok.Equal(t, code, 2)
-		ok.Equal(t, strings.Contains(stderr, "no-such-config.yaml"), true, ok.Sprintf("stderr: %q", stderr))
+		ok.True(t, strings.HasPrefix(stderr, "error: --config: "), ok.Sprintf("stderr: %q", stderr))
+		ok.Contains(t, stderr, "no-such-config.yaml")
 	})
 
 	t.Run("malformed", func(t *testing.T) {
