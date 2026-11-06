@@ -2,6 +2,7 @@ package lsp_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -78,28 +79,31 @@ func openDiagFile(t *testing.T, name string) (jsonrpc2.Conn, lspuri.URI) {
 func TestDiagnosticsParseErrors(t *testing.T) {
 	t.Parallel()
 
+	// wantStart is where the first diagnostic starts, as a 1-indexed
+	// line:col, the form cells check prints.
 	tests := []struct {
 		name        string
 		file        string
 		wantContain string
+		wantStart   string
 	}{
-		{"unexpected EOF", "unexpected_eof.cel", "mismatched input"},
-		{"unclosed paren", "unclosed_paren.cel", "missing ')'"},
-		{"unclosed bracket", "unclosed_bracket.cel", "mismatched input"},
-		{"unclosed brace", "unclosed_brace.cel", "mismatched input"},
-		{"unterminated string", "unterminated_string.cel", "token recognition error"},
-		{"unexpected token", "unexpected_token.cel", "extraneous input"},
-		{"trailing dot", "trailing_dot.cel", "no viable alternative"},
-		{"double dot", "double_dot.cel", "no viable alternative"},
-		{"unexpected comma", "unexpected_comma.cel", "mismatched input ','"},
-		{"missing operator", "missing_operator.cel", "extraneous input"},
-		{"empty function arg", "empty_function_arg.cel", "extraneous input ','"},
-		{"bad escape in string", "bad_escape.cel", "token recognition error"},
-		{"bad hex in bytes", "bad_hex_bytes.cel", "token recognition error"},
-		{"has with non-field", "has_non_field.cel", "invalid argument to has()"},
-		{"multiline parse error", "multiline_parse_error.cel", "mismatched input"},
-		{"unclosed paren multiline", "unclosed_paren_multiline.cel", "missing ')'"},
-		{"comment only", "comment_only.cel", "mismatched input"},
+		{"unexpected EOF", "unexpected_eof.cel", "mismatched input", "1:4"},
+		{"unclosed paren", "unclosed_paren.cel", "missing ')'", "1:7"},
+		{"unclosed bracket", "unclosed_bracket.cel", "mismatched input", "2:1"},
+		{"unclosed brace", "unclosed_brace.cel", "mismatched input", "2:1"},
+		{"unterminated string", "unterminated_string.cel", "token recognition error", "1:1"},
+		{"unexpected token", "unexpected_token.cel", "extraneous input", "1:5"},
+		{"trailing dot", "trailing_dot.cel", "no viable alternative", "2:1"},
+		{"double dot", "double_dot.cel", "no viable alternative", "1:3"},
+		{"unexpected comma", "unexpected_comma.cel", "mismatched input ','", "1:1"},
+		{"missing operator", "missing_operator.cel", "extraneous input", "1:3"},
+		{"empty function arg", "empty_function_arg.cel", "extraneous input ','", "1:3"},
+		{"bad escape in string", "bad_escape.cel", "token recognition error", "1:1"},
+		{"bad hex in bytes", "bad_hex_bytes.cel", "token recognition error", "1:2"},
+		{"has with non-field", "has_non_field.cel", "invalid argument to has()", "1:5"},
+		{"multiline parse error", "multiline_parse_error.cel", "mismatched input", "3:1"},
+		{"unclosed paren multiline", "unclosed_paren_multiline.cel", "missing ')'", "4:1"},
+		{"comment only", "comment_only.cel", "mismatched input", "2:1"},
 	}
 
 	for _, tt := range tests {
@@ -115,6 +119,8 @@ func TestDiagnosticsParseErrors(t *testing.T) {
 				ok.Equal(t, diagSource(d), "cells")
 			}
 			ok.True(t, containsSubstring(diagMessages(diags), tt.wantContain))
+			start := diags[0].Range.Start
+			ok.Equal(t, fmt.Sprintf("%d:%d", start.Line+1, start.Character+1), tt.wantStart)
 		})
 	}
 }
