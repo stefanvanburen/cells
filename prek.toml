@@ -1,0 +1,33 @@
+# Configuration file for `prek`, a git hook framework written in Rust.
+# See https://prek.j178.dev for more information.
+#:schema https://www.schemastore.org/prek.json
+
+# internal/lsp/testdata holds fixtures whose exact bytes the tests assert:
+# cursor positions, empty and whitespace-only files, and format goldens.
+# The whitespace fixers would rewrite them.
+exclude = "^internal/lsp/testdata/"
+
+[[repos]]
+repo = "builtin"
+hooks = [
+  { id = "trailing-whitespace" },
+  { id = "end-of-file-fixer" },
+  { id = "check-added-large-files" },
+  { id = "check-yaml" },
+  { id = "check-toml" },
+  { id = "check-merge-conflict" },
+  { id = "detect-private-key" },
+]
+
+[[repos]]
+repo = "local"
+hooks = [
+  # -d and -diff exit 1 when they would change something, so each hook fails
+  # with the patch it wants instead of editing the tree mid-commit.
+  { id = "gofmt", name = "gofmt", entry = "gofmt -d", language = "system", types = ["go"] },
+  { id = "go-fix", name = "go fix", entry = "go fix -diff ./...", language = "system", pass_filenames = false, types = ["go"] },
+  { id = "go-vet", name = "go vet", entry = "go vet ./...", language = "system", pass_filenames = false, types = ["go"] },
+  # A go.mod tool dependency, so go.mod is the one place its version is set.
+  { id = "staticcheck", name = "staticcheck", entry = "go tool staticcheck ./...", language = "system", pass_filenames = false, types = ["go"] },
+  { id = "tombi-format", name = "tombi format", entry = "tombi format", language = "system", files = "^prek\\.toml$" },
+]
