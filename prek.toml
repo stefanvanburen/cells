@@ -29,5 +29,9 @@ hooks = [
   { id = "go-vet", name = "go vet", entry = "go vet ./...", language = "system", pass_filenames = false, types = ["go"] },
   # A go.mod tool dependency, so go.mod is the one place its version is set.
   { id = "staticcheck", name = "staticcheck", entry = "go tool staticcheck ./...", language = "system", pass_filenames = false, types = ["go"] },
+  # always_run because testdata changes what the tests assert, and the global
+  # exclude above keeps internal/lsp/testdata from matching any files pattern.
+  # The test cache makes runs that change nothing it depends on near-instant.
+  { id = "go-test", name = "go test", entry = "go test -race ./...", language = "system", pass_filenames = false, always_run = true },
   { id = "tombi-format", name = "tombi format", entry = "tombi format", language = "system", files = "^prek\\.toml$" },
 ]

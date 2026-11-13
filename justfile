@@ -5,20 +5,16 @@ default: check
 test:
     go test -race ./...
 
-# Run go vet and staticcheck.
-lint:
-    go vet ./...
-    go tool staticcheck ./...
-    go fix -diff ./...
-    gofmt -d .
 
 # Format all Go files and run automatic fixes.
 fmt:
     gofmt -w .
     go fix ./...
 
-# Run lint and test.
-check: lint test
+# Run the prek hooks: file checks, gofmt, go fix, go vet, staticcheck and
+# tests.
+check:
+    prek run --all-files
 
 # Install the cells binary.
 install:
