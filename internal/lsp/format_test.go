@@ -3,8 +3,11 @@ package lsp_test
 import (
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"unicode/utf16"
+	"unicode/utf8"
 
 	"go.lsp.dev/protocol"
 	"go.vanburen.xyz/cells/internal/lsp"
@@ -62,10 +65,10 @@ func TestFormat(t *testing.T) {
 	}
 }
 
-// TestFormatEditRangeNonASCII pins the end of the whole-document replacement
-// to UTF-16 code units, which is what LSP positions are measured in. The input
-// is 11 bytes but 10 code units long, and has no trailing newline, so a range
-// counted in bytes would run past the end of the only line.
+// TestFormatEditRangeNonASCII pins the end of the edit of the input's only
+// line to UTF-16 code units, which is what LSP positions are measured in. The
+// input is 11 bytes but 10 code units long, and has no trailing newline, so a
+// range counted in bytes would run past the end of the line.
 func TestFormatEditRangeNonASCII(t *testing.T) {
 	t.Parallel()
 
@@ -111,6 +114,73 @@ func TestFormatCapabilities(t *testing.T) {
 	ok.MustNoError(t, err)
 
 	ok.True(t, result.Capabilities.DocumentFormattingProvider != nil)
+	ok.True(t, result.Capabilities.DocumentRangeFormattingProvider != nil)
+}
+
+// TestRangeFormatting formats a document with two changed lines, 1 and 3,
+// around an unchanged one, and checks which of their edits each selection
+// gets.
+func TestRangeFormatting(t *testing.T) {
+	t.Parallel()
+
+	const path = "testdata/range_formatting/two_changes.cel"
+	input, err := os.ReadFile(path)
+	ok.MustNoError(t, err)
+
+	tests := []struct {
+		name      string
+		selection protocol.Range
+		edits     int
+		want      string
+	}{
+		{
+			name:      "line_of_one_change",
+			selection: protocol.Range{Start: protocol.Position{Line: 1}, End: protocol.Position{Line: 2}},
+			edits:     1,
+			want:      "[\n  1 + 2,\n  3,\n  4  +  5\n]\n",
+		},
+		{
+			name:      "part_of_a_line",
+			selection: protocol.Range{Start: protocol.Position{Line: 1, Character: 2}, End: protocol.Position{Line: 1, Character: 3}},
+			edits:     1,
+			want:      "[\n  1 + 2,\n  3,\n  4  +  5\n]\n",
+		},
+		{
+			name:      "cursor_in_change",
+			selection: protocol.Range{Start: protocol.Position{Line: 3, Character: 3}, End: protocol.Position{Line: 3, Character: 3}},
+			edits:     1,
+			want:      "[\n  1+2,\n  3,\n  4 + 5,\n]\n",
+		},
+		{
+			name:      "unchanged_line_between",
+			selection: protocol.Range{Start: protocol.Position{Line: 2}, End: protocol.Position{Line: 3}},
+			edits:     0,
+			want:      string(input),
+		},
+		{
+			name:      "whole_document",
+			selection: protocol.Range{End: protocol.Position{Line: 5}},
+			edits:     2,
+			want:      "[\n  1 + 2,\n  3,\n  4 + 5,\n]\n",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			clientConn, testURI := setupLSPServer(t, getAbsPath(t, path))
+			var edits []protocol.TextEdit
+			_, err := clientConn.Call(t.Context(), "textDocument/rangeFormatting", protocol.DocumentRangeFormattingParams{
+				TextDocument: protocol.TextDocumentIdentifier{URI: testURI},
+				Range:        tt.selection,
+				Options:      protocol.FormattingOptions{TabSize: 2, InsertSpaces: true},
+			}, &edits)
+			ok.MustNoError(t, err)
+
+			ok.Equal(t, len(edits), tt.edits)
+			ok.Equal(t, applyEdits(string(input), edits), tt.want)
+		})
+	}
 }
 
 // requestFormatting opens a file and sends a textDocument/formatting request.
@@ -134,12 +204,30 @@ func requestFormatting(t *testing.T, celFile string) []protocol.TextEdit {
 	return edits
 }
 
-// applyEdits applies text edits to the original content.
-// For our formatter, there's at most one whole-document edit.
+// applyEdits applies edits, which must not overlap, to content.
 func applyEdits(content string, edits []protocol.TextEdit) string {
-	if len(edits) == 0 {
-		return content
+	edits = slices.Clone(edits)
+	slices.SortFunc(edits, func(a, b protocol.TextEdit) int {
+		return positionOffset(content, b.Range.Start) - positionOffset(content, a.Range.Start)
+	})
+	for _, edit := range edits {
+		start, end := positionOffset(content, edit.Range.Start), positionOffset(content, edit.Range.End)
+		content = content[:start] + edit.NewText + content[end:]
 	}
-	// We always emit a single whole-document replacement.
-	return edits[0].NewText
+	return content
+}
+
+// positionOffset returns the byte offset in content of pos, whose character
+// is measured in UTF-16 code units.
+func positionOffset(content string, pos protocol.Position) int {
+	offset := 0
+	for range pos.Line {
+		offset += strings.IndexByte(content[offset:], '\n') + 1
+	}
+	for character := uint32(0); character < pos.Character; {
+		r, size := utf8.DecodeRuneInString(content[offset:])
+		character += uint32(utf16.RuneLen(r))
+		offset += size
+	}
+	return offset
 }

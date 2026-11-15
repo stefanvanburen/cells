@@ -12,37 +12,95 @@ import (
 	"cel.dev/cel-go/parser/gen"
 	"github.com/bufbuild/protocompile/experimental/dom"
 	"go.lsp.dev/protocol"
+	"go.lsp.dev/uri"
+	"znkr.io/diff"
+	"znkr.io/diff/textdiff"
 )
 
 func (s *server) Formatting(ctx context.Context, params *protocol.DocumentFormattingParams) ([]protocol.TextEdit, error) {
-	f, docEnv := s.document(ctx, params.TextDocument.URI)
+	return s.formattingEdits(ctx, params.TextDocument.URI), nil
+}
 
+// RangeFormatting formats the whole document and returns the edits that
+// intersect the requested range. An edit covers a whole run of changed lines,
+// so a range that covers part of a run formats all of it.
+func (s *server) RangeFormatting(ctx context.Context, params *protocol.DocumentRangeFormattingParams) ([]protocol.TextEdit, error) {
+	edits := s.formattingEdits(ctx, params.TextDocument.URI)
+	return slices.DeleteFunc(edits, func(edit protocol.TextEdit) bool {
+		return !editIntersectsRange(edit.Range, params.Range)
+	}), nil
+}
+
+// formattingEdits formats the document at docURI and returns one edit per run
+// of lines that formatting changes. It returns no edits if the document does
+// not parse.
+func (s *server) formattingEdits(ctx context.Context, docURI uri.URI) []protocol.TextEdit {
+	f, docEnv := s.document(ctx, docURI)
 	if f == nil || docEnv == nil {
-		return nil, nil
+		return nil
 	}
-
 	formatted, err := formatCEL(f.content, docEnv.celEnv)
 	if err != nil {
-		// If formatting fails (e.g., parse error), return no edits.
-		return nil, nil
+		return nil
 	}
+	return lineEdits(f.content, formatted)
+}
 
-	if formatted == f.content {
-		return nil, nil
+// lineEdits returns the edits that turn oldText into newText, one for each
+// run of changed lines. Their positions are measured in UTF-16 code units, as
+// LSP positions are.
+func lineEdits(oldText, newText string) []protocol.TextEdit {
+	oldStarts, newStarts := lineStarts(oldText), lineStarts(newText)
+	var edits []protocol.TextEdit
+	for _, hunk := range textdiff.Hunks(oldText, newText, diff.Context(0)) {
+		edits = append(edits, protocol.TextEdit{
+			Range: protocol.Range{
+				Start: offsetPosition(oldText, oldStarts[hunk.LineNoX]),
+				End:   offsetPosition(oldText, oldStarts[hunk.EndLineNoX]),
+			},
+			NewText: newText[newStarts[hunk.LineNoY]:newStarts[hunk.EndLineNoY]],
+		})
 	}
+	return edits
+}
 
-	// Replace the entire document: an edit from the start of the file to its
-	// end. That end is a position like any other, so its column is measured in
-	// UTF-16 code units rather than in bytes.
-	endLine, endCharacter := byteOffsetToLineCol(f.content, len(f.content))
+// lineStarts returns the byte offset at which each line of text starts,
+// followed by len(text) if text does not end with a newline.
+func lineStarts(text string) []int {
+	starts := []int{0}
+	for i := range len(text) {
+		if text[i] == '\n' {
+			starts = append(starts, i+1)
+		}
+	}
+	if starts[len(starts)-1] != len(text) {
+		starts = append(starts, len(text))
+	}
+	return starts
+}
 
-	return []protocol.TextEdit{{
-		Range: protocol.Range{
-			Start: protocol.Position{Line: 0, Character: 0},
-			End:   protocol.Position{Line: endLine, Character: endCharacter},
-		},
-		NewText: formatted,
-	}}, nil
+func offsetPosition(text string, offset int) protocol.Position {
+	line, character := byteOffsetToLineCol(text, offset)
+	return protocol.Position{Line: line, Character: character}
+}
+
+// editIntersectsRange reports whether an edit of editRange changes text
+// within selection.
+//
+// Ranges that only touch do not intersect, so an edit that ends at the start
+// of the selection's first line is excluded. An insertion intersects a
+// selection that contains or touches it, and an empty selection intersects an
+// edit that contains or touches it.
+func editIntersectsRange(editRange, selection protocol.Range) bool {
+	if editRange.Start == editRange.End || selection.Start == selection.End {
+		return !positionLess(selection.End, editRange.Start) && !positionLess(editRange.End, selection.Start)
+	}
+	return positionLess(editRange.Start, selection.End) && positionLess(selection.Start, editRange.End)
+}
+
+// positionLess reports whether a is before b.
+func positionLess(a, b protocol.Position) bool {
+	return a.Line < b.Line || (a.Line == b.Line && a.Character < b.Character)
 }
 
 const (

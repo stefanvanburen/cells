@@ -344,8 +344,9 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 				OpenClose: new(true),
 				Change:    new(protocol.TextDocumentSyncKindFull),
 			},
-			HoverProvider:              protocol.Boolean(true),
-			DocumentFormattingProvider: protocol.Boolean(true),
+			HoverProvider:                   protocol.Boolean(true),
+			DocumentFormattingProvider:      protocol.Boolean(true),
+			DocumentRangeFormattingProvider: protocol.Boolean(true),
 			CompletionProvider: &protocol.CompletionOptions{
 				TriggerCharacters: []string{"."},
 				CompletionItem:    &protocol.ServerCompletionItemOptions{LabelDetailsSupport: new(true)},
