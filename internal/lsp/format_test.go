@@ -1,6 +1,7 @@
 package lsp_test
 
 import (
+	"cmp"
 	"os"
 	"path/filepath"
 	"slices"
@@ -56,7 +57,7 @@ func TestFormat(t *testing.T) {
 			input, err := os.ReadFile(tt.input)
 			ok.MustNoError(t, err)
 
-			got := applyEdits(string(input), edits)
+			got := applyEdits(t, string(input), edits)
 			ok.Equal(t, got, string(golden))
 
 			// Formatted source is left as it is.
@@ -178,7 +179,7 @@ func TestRangeFormatting(t *testing.T) {
 			ok.MustNoError(t, err)
 
 			ok.Equal(t, len(edits), tt.edits)
-			ok.Equal(t, applyEdits(string(input), edits), tt.want)
+			ok.Equal(t, applyEdits(t, string(input), edits), tt.want)
 		})
 	}
 }
@@ -204,30 +205,62 @@ func requestFormatting(t *testing.T, celFile string) []protocol.TextEdit {
 	return edits
 }
 
-// applyEdits applies edits, which must not overlap, to content.
-func applyEdits(content string, edits []protocol.TextEdit) string {
-	edits = slices.Clone(edits)
-	slices.SortFunc(edits, func(a, b protocol.TextEdit) int {
-		return positionOffset(content, b.Range.Start) - positionOffset(content, a.Range.Start)
-	})
-	for _, edit := range edits {
-		start, end := positionOffset(content, edit.Range.Start), positionOffset(content, edit.Range.End)
-		content = content[:start] + edit.NewText + content[end:]
+// applyEdits applies edits, in any order, to content. It fails t if a
+// position is not in content or two edits overlap.
+func applyEdits(t *testing.T, content string, edits []protocol.TextEdit) string {
+	t.Helper()
+	type span struct {
+		start, end int
+		newText    string
 	}
-	return content
+	spans := make([]span, 0, len(edits))
+	for _, edit := range edits {
+		start, end := positionOffset(t, content, edit.Range.Start), positionOffset(t, content, edit.Range.End)
+		if end < start {
+			t.Fatalf("edit of %v ends before it starts", edit.Range)
+		}
+		spans = append(spans, span{start, end, edit.NewText})
+	}
+	slices.SortStableFunc(spans, func(a, b span) int { return cmp.Compare(a.start, b.start) })
+
+	var b strings.Builder
+	previousEnd := 0
+	for _, s := range spans {
+		if s.start < previousEnd {
+			t.Fatalf("edit of bytes %d to %d overlaps an edit ending at byte %d", s.start, s.end, previousEnd)
+		}
+		b.WriteString(content[previousEnd:s.start])
+		b.WriteString(s.newText)
+		previousEnd = s.end
+	}
+	b.WriteString(content[previousEnd:])
+	return b.String()
 }
 
 // positionOffset returns the byte offset in content of pos, whose character
-// is measured in UTF-16 code units.
-func positionOffset(content string, pos protocol.Position) int {
+// is measured in UTF-16 code units. It fails t if pos is past the end of its
+// line or of content, or inside a surrogate pair.
+func positionOffset(t *testing.T, content string, pos protocol.Position) int {
+	t.Helper()
 	offset := 0
 	for range pos.Line {
-		offset += strings.IndexByte(content[offset:], '\n') + 1
+		i := strings.IndexByte(content[offset:], '\n')
+		if i < 0 {
+			t.Fatalf("line %d is past the end of the text", pos.Line)
+		}
+		offset += i + 1
 	}
-	for character := uint32(0); character < pos.Character; {
+	var units uint32
+	for units < pos.Character {
 		r, size := utf8.DecodeRuneInString(content[offset:])
-		character += uint32(utf16.RuneLen(r))
+		if size == 0 || r == '\n' {
+			t.Fatalf("character %d is past the end of line %d", pos.Character, pos.Line)
+		}
+		units += uint32(utf16.RuneLen(r))
 		offset += size
+	}
+	if units != pos.Character {
+		t.Fatalf("character %d of line %d is inside a surrogate pair", pos.Character, pos.Line)
 	}
 	return offset
 }
