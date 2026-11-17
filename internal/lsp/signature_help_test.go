@@ -71,6 +71,13 @@ func TestSignatureHelp(t *testing.T) {
 			wantActiveParam: new(uint32(0)),
 		},
 		{
+			name:              "past_line_end",
+			file:              "testdata/signature_help/past_line_end.cel",
+			pos:               protocol.Position{Line: 0, Character: 99},
+			wantSignatures:    true,
+			wantLabelContains: "size(",
+		},
+		{
 			name:           "not_a_call",
 			file:           "testdata/signature_help/not_a_call.cel",
 			pos:            protocol.Position{Line: 0, Character: 8},

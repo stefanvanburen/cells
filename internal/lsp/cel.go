@@ -135,7 +135,11 @@ func runeLineColToByteOffset(text string, line, runeCol int) int {
 	return -1
 }
 
-// lineColToByteOffset converts an LSP position (0-indexed line, UTF-16 col) to a byte offset.
+// lineColToByteOffset converts an LSP position (0-indexed line, UTF-16 col)
+// to a byte offset, or -1 if the line is past the end of text. A column past
+// the end of the line resolves to the end of the line, before its line
+// break, and a column inside a character resolves to the start of that
+// character.
 func lineColToByteOffset(text string, line, utf16Col uint32) int {
 	currentLine := uint32(0)
 	i := 0
@@ -149,12 +153,12 @@ func lineColToByteOffset(text string, line, utf16Col uint32) int {
 		return -1
 	}
 	col := uint32(0)
-	for i < len(text) && col < utf16Col {
-		if text[i] == '\n' {
-			return -1
-		}
+	for i < len(text) && text[i] != '\n' && !strings.HasPrefix(text[i:], "\r\n") {
 		r, size := utf8.DecodeRuneInString(text[i:])
 		col += uint32(utf16.RuneLen(r))
+		if col > utf16Col {
+			break
+		}
 		i += size
 	}
 	return i
