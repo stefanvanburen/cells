@@ -101,34 +101,39 @@ func LoadConfig(path string) (*env.Config, error) {
 // newEnvironment builds the environment described by opts: the CEL environment
 // itself, and what cells knows about it that cel-go does not record.
 func newEnvironment(opts Options) (*environment, error) {
-	celEnv, fieldDocs, err := newCELEnv(opts)
+	celEnv, sets, err := newCELEnv(opts)
 	if err != nil {
 		return nil, err
+	}
+	fieldDocs := make(map[string]string)
+	for _, set := range sets {
+		protoFieldDocs(set, fieldDocs)
 	}
 	return &environment{
 		celEnv:        celEnv,
 		checkSeverity: checkSeverity(opts),
 		fieldDocs:     fieldDocs,
+		protoFiles:    newProtoFiles(sets),
 		configPath:    opts.ConfigPath,
 	}, nil
 }
 
-// newCELEnv builds the CEL environment described by opts, along with the
-// documentation its descriptor sets carry, which cel-go's type provider does
-// not keep.
-func newCELEnv(opts Options) (*cel.Env, map[string]string, error) {
+// newCELEnv builds the CEL environment described by opts, and returns it with
+// the descriptor sets it was given, which carry what cel-go's type provider
+// does not keep: documentation, and where each type was declared.
+func newCELEnv(opts Options) (*cel.Env, []*descriptorpb.FileDescriptorSet, error) {
 	// Types are registered before the configuration is applied, because the
 	// type provider in place when FromConfig runs is the one it resolves the
 	// configuration's type references against.
 	envOpts := make([]cel.EnvOption, 0, len(opts.DescriptorSets)+3)
-	fieldDocs := make(map[string]string)
+	sets := make([]*descriptorpb.FileDescriptorSet, 0, len(opts.DescriptorSets))
 	for _, path := range opts.DescriptorSets {
 		descriptors, err := loadDescriptorSet(path)
 		if err != nil {
 			return nil, nil, err
 		}
 		envOpts = append(envOpts, cel.TypeDescs(descriptors))
-		protoFieldDocs(descriptors, fieldDocs)
+		sets = append(sets, descriptors)
 	}
 
 	config := env.NewConfig(serverName)
@@ -189,7 +194,7 @@ func newCELEnv(opts Options) (*cel.Env, map[string]string, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	return celEnv, fieldDocs, nil
+	return celEnv, sets, nil
 }
 
 // loadDescriptorSet reads an encoded google.protobuf.FileDescriptorSet.

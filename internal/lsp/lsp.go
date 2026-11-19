@@ -152,6 +152,11 @@ type server struct {
 	// labelDetails, which it says when it initializes.
 	completionLabelDetails bool
 
+	// textDocumentContent is whether the client can open the .proto files
+	// cells renders from its descriptor sets, which it says when it
+	// initializes. Go to definition only points into them if it can.
+	textDocumentContent bool
+
 	// refresh is which of the workspace refresh requests the client supports,
 	// which it says when it initializes.
 	refresh refreshSupport
@@ -384,6 +389,7 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 			s.completionLabelDetails = c.Completion.CompletionItem.LabelDetailsSupport != nil && *c.Completion.CompletionItem.LabelDetailsSupport
 		}
 		if w := params.Capabilities.Workspace; w != nil {
+			s.textDocumentContent = w.TextDocumentContent != nil
 			s.refresh = refreshSupport{
 				inlayHints:     w.InlayHint != nil && w.InlayHint.RefreshSupport != nil && *w.InlayHint.RefreshSupport,
 				semanticTokens: w.SemanticTokens != nil && w.SemanticTokens.RefreshSupport != nil && *w.SemanticTokens.RefreshSupport,
@@ -424,6 +430,9 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 			SelectionRangeProvider:     protocol.Boolean(true),
 			FoldingRangeProvider:       protocol.Boolean(true),
 			LinkedEditingRangeProvider: protocol.Boolean(true),
+			Workspace: &protocol.WorkspaceOptions{
+				TextDocumentContent: &protocol.TextDocumentContentOptions{Schemes: []string{protoScheme}},
+			},
 			CodeActionProvider: &protocol.CodeActionOptions{
 				CodeActionKinds: []protocol.CodeActionKind{protocol.CodeActionKindQuickFix},
 			},

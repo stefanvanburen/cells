@@ -20,6 +20,9 @@ func (s *server) Definition(ctx context.Context, params *protocol.DefinitionPara
 	}
 
 	location, found := computeDefinition(f, docEnv.celEnv, docEnv.configPath, params.Position)
+	if !found && s.textDocumentContent {
+		location, found = protoDefinition(f, docEnv, params.Position)
+	}
 	if !found {
 		return nil, nil
 	}

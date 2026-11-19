@@ -17,7 +17,7 @@ $ go install go.vanburen.xyz/cells/cmd/cells@latest
 * Formatting (keeps comments and literals as written, breaking lines at 100 columns)
 * Hover (including function return types, the values of subexpressions that take no input, declared variable types, and message field types and comments)
 * References
-* Go to definition
+* Go to definition (including messages and fields from descriptor sets, rendered as `.proto` source, for clients that support `workspace/textDocumentContent`)
 * Completion (including declared variables, the variables macros bind, and message fields)
 * Signature help
 * Variable renaming

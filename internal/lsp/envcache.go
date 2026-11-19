@@ -10,6 +10,7 @@ import (
 	"cel.dev/cel-go/common/types"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
+	"google.golang.org/protobuf/reflect/protoregistry"
 )
 
 // environment is a CEL environment together with what cells needs to know
@@ -25,6 +26,11 @@ type environment struct {
 	// carry, keyed by fully-qualified field name. cel-go's type provider knows
 	// a field's type but not what the .proto file said about it.
 	fieldDocs map[string]string
+
+	// protoFiles holds the files the environment's descriptor sets describe,
+	// which cells renders as .proto source for a client to show; see
+	// protoview.go.
+	protoFiles *protoregistry.Files
 
 	// configPath is the configuration this environment was built from, or ""
 	// when it was built from none. stamp is what the files behind it looked
