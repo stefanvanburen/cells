@@ -95,16 +95,24 @@ type envCache struct {
 
 	byPath map[string]*environment
 
-	// generation counts the environments this cache has built. A request that
-	// rebuilds one bumps it, which is how the server notices that what it has
-	// already published was judged against an environment that is now gone.
+	// generation counts the times this cache has replaced what it gave for a
+	// configuration: a rebuilt environment, or one built where the last
+	// attempt failed. A request that does either bumps it, which is how the
+	// server notices that what it has already told the client was judged
+	// against an environment that is now gone. Building one for a
+	// configuration seen for the first time leaves it alone, since nothing
+	// was judged against that configuration before.
 	generation uint64
+
+	// failed holds the configurations whose last build failed.
+	failed map[string]bool
 }
 
 func newEnvCache(opts Options) *envCache {
 	return &envCache{
 		opts:   opts,
 		byPath: make(map[string]*environment),
+		failed: make(map[string]bool),
 	}
 }
 
@@ -152,13 +160,19 @@ func (c *envCache) retain(inUse map[string]bool) {
 			delete(c.byPath, configPath)
 		}
 	}
+	for configPath := range c.failed {
+		if !inUse[configPath] {
+			delete(c.failed, configPath)
+		}
+	}
 }
 
 // forPath returns the environment built from the configuration at configPath,
 // which may be "" for no configuration at all.
 func (c *envCache) forPath(configPath string) (*environment, error) {
 	stamp := c.statInputs(configPath)
-	if cached, ok := c.byPath[configPath]; ok && cached.stamp.equal(stamp) {
+	cached, seen := c.byPath[configPath]
+	if seen && cached.stamp.equal(stamp) {
 		return cached, nil
 	}
 
@@ -166,11 +180,19 @@ func (c *envCache) forPath(configPath string) (*environment, error) {
 	opts.ConfigPath = configPath
 	built, err := newEnvironment(opts)
 	if err != nil {
+		if seen {
+			delete(c.byPath, configPath)
+			c.generation++
+		}
+		c.failed[configPath] = true
 		return nil, err
 	}
 	built.stamp = stamp
 
-	c.generation++
+	if seen || c.failed[configPath] {
+		c.generation++
+	}
+	delete(c.failed, configPath)
 	c.byPath[configPath] = built
 	return built, nil
 }

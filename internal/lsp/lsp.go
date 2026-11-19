@@ -152,6 +152,10 @@ type server struct {
 	// labelDetails, which it says when it initializes.
 	completionLabelDetails bool
 
+	// refresh is which of the workspace refresh requests the client supports,
+	// which it says when it initializes.
+	refresh refreshSupport
+
 	initialized atomic.Bool // set by Initialize; read by the lifecycle guard
 	shutdown    atomic.Bool // set by Shutdown; read by Exit to pick its process exit code
 }
@@ -268,13 +272,17 @@ func (s *server) document(ctx context.Context, docURI uri.URI) (*file, *environm
 	return f, docEnv
 }
 
-// refreshDiagnostics republishes every open document's diagnostics when an
-// environment has been rebuilt since the last time they were published.
+// refreshDiagnostics brings the client up to date when an environment has
+// been rebuilt since it was last told: it republishes every open document's
+// diagnostics, and asks the client to request again whatever else it has
+// cached that depends on the environment.
 //
 // Diagnostics are pushed, and only on open and on change. Editing a cel.yaml
 // is neither: the document the edit invalidates is not itself being edited, so
 // without this its errors would stand until the next keystroke in it, long
-// after hover and completion had moved on to the new configuration.
+// after hover and completion had moved on to the new configuration. The same
+// goes for what a client requests on change and keeps until then: inlay hints,
+// semantic tokens, and pulled diagnostics.
 //
 // Every open document is refreshed rather than only those the rebuilt
 // configuration governs. Working out which those are costs a search up the
@@ -296,6 +304,45 @@ func (s *server) refreshDiagnostics(ctx context.Context) {
 	for _, f := range open {
 		s.publishDiagnostics(ctx, f)
 	}
+	s.requestRefresh(ctx)
+}
+
+// refreshSupport is which of the workspace refresh requests a client supports.
+type refreshSupport struct {
+	inlayHints, semanticTokens, diagnostics bool
+}
+
+// requestRefresh asks the client to request again the inlay hints, semantic
+// tokens, and pulled diagnostics it has, of those it supports refreshing.
+//
+// The requests are sent from a goroutine of their own. Handlers run on the
+// goroutine that reads the connection, so one that waited for the client's
+// response would never read it. Nothing waits for them: the client's answer
+// is the requests it makes next.
+func (s *server) requestRefresh(ctx context.Context) {
+	client, ok := protocol.ClientFromContext(ctx)
+	if !ok {
+		return
+	}
+	var refreshes []func(context.Context) error
+	if s.refresh.inlayHints {
+		refreshes = append(refreshes, client.InlayHintRefresh)
+	}
+	if s.refresh.semanticTokens {
+		refreshes = append(refreshes, client.SemanticTokensRefresh)
+	}
+	if s.refresh.diagnostics && s.pullDiagnostics {
+		refreshes = append(refreshes, client.DiagnosticRefresh)
+	}
+	if len(refreshes) == 0 {
+		return
+	}
+	ctx = context.WithoutCancel(ctx)
+	go func() {
+		for _, refresh := range refreshes {
+			_ = refresh(ctx)
+		}
+	}()
 }
 
 // clientInitializationOptions is the shape cells reads out of the LSP
@@ -335,6 +382,13 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 	if params != nil {
 		if c := params.Capabilities.TextDocument; c != nil && c.Completion != nil && c.Completion.CompletionItem != nil {
 			s.completionLabelDetails = c.Completion.CompletionItem.LabelDetailsSupport != nil && *c.Completion.CompletionItem.LabelDetailsSupport
+		}
+		if w := params.Capabilities.Workspace; w != nil {
+			s.refresh = refreshSupport{
+				inlayHints:     w.InlayHint != nil && w.InlayHint.RefreshSupport != nil && *w.InlayHint.RefreshSupport,
+				semanticTokens: w.SemanticTokens != nil && w.SemanticTokens.RefreshSupport != nil && *w.SemanticTokens.RefreshSupport,
+				diagnostics:    w.Diagnostics != nil && w.Diagnostics.RefreshSupport != nil && *w.Diagnostics.RefreshSupport,
+			}
 		}
 	}
 	s.initialized.Store(true)

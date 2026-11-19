@@ -1,11 +1,14 @@
 package lsp_test
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
+	"time"
 
 	"go.lsp.dev/jsonrpc2"
 	"go.lsp.dev/protocol"
@@ -426,6 +429,119 @@ variables:
 	params := dc.latest()
 	ok.Equal(t, string(params.URI), string(celURI))
 	ok.Equal(t, len(params.Diagnostics), 0, ok.Sprintf("diagnostics: %v", params.Diagnostics))
+}
+
+// refreshRecorder is a client that supports the workspace refresh requests and
+// records each one it receives.
+type refreshRecorder struct {
+	protocol.UnimplementedClient
+	got chan string
+}
+
+func (r *refreshRecorder) PublishDiagnostics(context.Context, *protocol.PublishDiagnosticsParams) error {
+	return nil
+}
+
+func (r *refreshRecorder) InlayHintRefresh(context.Context) error {
+	r.got <- "inlayHint"
+	return nil
+}
+
+func (r *refreshRecorder) SemanticTokensRefresh(context.Context) error {
+	r.got <- "semanticTokens"
+	return nil
+}
+
+func (r *refreshRecorder) DiagnosticRefresh(context.Context) error {
+	r.got <- "diagnostic"
+	return nil
+}
+
+// What a client requests as a document changes and keeps until it next
+// changes is requested again when the configuration it was computed under is
+// edited, for each kind the client can be asked to refresh: inlay hints and
+// semantic tokens, and diagnostics when the client pulls them.
+func TestServerRequestsRefreshAfterConfigChange(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name string
+		pull bool
+		want []string
+	}{
+		{"push diagnostics", false, []string{"inlayHint", "semanticTokens"}},
+		{"pull diagnostics", true, []string{"diagnostic", "inlayHint", "semanticTokens"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
+
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, lsp.ConfigFileName)
+			ok.MustNoError(t, os.WriteFile(configPath, []byte("name: test\n"), 0o600))
+			celPath := filepath.Join(dir, "a.cel")
+
+			recorder := &refreshRecorder{got: make(chan string, 10)}
+			conn := newLSPClient(t, recorder, lsp.Options{})
+			params := protocol.InitializeParams{
+				Capabilities: protocol.ClientCapabilities{
+					Workspace: &protocol.WorkspaceClientCapabilities{
+						InlayHint:      &protocol.InlayHintWorkspaceClientCapabilities{RefreshSupport: new(true)},
+						SemanticTokens: &protocol.SemanticTokensWorkspaceClientCapabilities{RefreshSupport: new(true)},
+						Diagnostics:    &protocol.DiagnosticWorkspaceClientCapabilities{RefreshSupport: new(true)},
+					},
+				},
+			}
+			if tt.pull {
+				params.InitializationOptions = protocol.LSPAny(`{"pullDiagnostics": true}`)
+			}
+			var initResult protocol.InitializeResult
+			_, err := conn.Call(ctx, "initialize", params, &initResult)
+			ok.MustNoError(t, err)
+			ok.MustNoError(t, conn.Notify(ctx, "initialized", protocol.InitializedParams{}))
+
+			requestHints := func() {
+				var hints []protocol.InlayHint
+				_, err := conn.Call(ctx, "textDocument/inlayHint", protocol.InlayHintParams{
+					TextDocument: protocol.TextDocumentIdentifier{URI: uri.File(celPath)},
+				}, &hints)
+				ok.MustNoError(t, err)
+			}
+
+			// Opening the document builds its environment for the first time,
+			// which nothing the client holds depends on yet, so the requests
+			// that follow have nothing to refresh.
+			openAndDiagnose(t, conn, celPath, "items.all(x, x > 0)")
+			requestHints()
+
+			ok.MustNoError(t, os.WriteFile(configPath, []byte(`
+name: test
+variables:
+  - name: items
+    type_name: list
+    params: [{type_name: int}]
+`), 0o600))
+			requestHints()
+
+			var got []string
+			for range tt.want {
+				select {
+				case method := <-recorder.got:
+					got = append(got, method)
+				case <-time.After(5 * time.Second):
+					t.Fatalf("refreshes: got %v, want %v", got, tt.want)
+				}
+			}
+			slices.Sort(got)
+			ok.Equal(t, got, tt.want)
+			select {
+			case method := <-recorder.got:
+				t.Errorf("unexpected %s refresh", method)
+			case <-time.After(100 * time.Millisecond):
+			}
+		})
+	}
 }
 
 // A configuration that does not load is reported against the document that
