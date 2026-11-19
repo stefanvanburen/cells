@@ -60,7 +60,12 @@ func computeHover(f *file, docEnv *environment, pos protocol.Position) (*protoco
 		hovers = append(hovers, hoverInfo{byteStart: byteStart, byteEnd: byteEnd, markdown: markdown})
 	}
 
-	walkCELExprForHover(nativeAST.Expr(), sourceInfo, f.content, celEnv, collectHover, nil)
+	// Calls show their result type if the expression type-checks.
+	var typed *ast.AST
+	if checked, _ := f.check(celEnv); checked != nil {
+		typed = checked.NativeRep()
+	}
+	walkCELExprForHover(nativeAST.Expr(), sourceInfo, f.content, celEnv, typed, collectHover, nil)
 	collectMacroHovers(sourceInfo, f.content, celEnv, collectHover)
 	collectDeclaredHovers(f, docEnv, nativeAST, collectHover)
 	collectBoundHovers(f, celEnv, nativeAST, collectHover)
@@ -230,12 +235,14 @@ func boundVariableHover(name string, t *types.Type, macro string) string {
 	return markdown + fmt.Sprintf("\n\nBound by `%s`.", macro)
 }
 
-// walkCELExprForHover walks the CEL AST and collects hover info.
+// walkCELExprForHover walks the CEL AST and collects hover info. typed is the
+// type-checked AST of the expression, or nil if it does not type-check.
 func walkCELExprForHover(
 	expr ast.Expr,
 	sourceInfo *ast.SourceInfo,
 	exprString string,
 	celEnv *cel.Env,
+	typed *ast.AST,
 	collectHover func(byteStart, byteEnd int, markdown string),
 	compVars map[string]bool,
 ) {
@@ -257,13 +264,13 @@ func walkCELExprForHover(
 	case ast.SelectKind:
 		sel := expr.AsSelect()
 		if sel.Operand() != nil {
-			walkCELExprForHover(sel.Operand(), sourceInfo, exprString, celEnv, collectHover, compVars)
+			walkCELExprForHover(sel.Operand(), sourceInfo, exprString, celEnv, typed, collectHover, compVars)
 		}
 
 	case ast.CallKind:
 		call := expr.AsCall()
 		if call.IsMemberFunction() {
-			walkCELExprForHover(call.Target(), sourceInfo, exprString, celEnv, collectHover, compVars)
+			walkCELExprForHover(call.Target(), sourceInfo, exprString, celEnv, typed, collectHover, compVars)
 		}
 
 		funcName := call.FunctionName()
@@ -271,17 +278,21 @@ func walkCELExprForHover(
 		if _, isOperator := celOperatorSymbol(funcName); isOperator {
 			if hasOffset {
 				byteStart, byteStop := celOffsetRangeToByteRange(exprString, offsetRange)
-				collectHover(byteStart, byteStop, celFunctionHover(funcName, celEnv))
+				collectHover(byteStart, byteStop, celFunctionHover(funcName, celEnv, nil))
 			}
 		} else if !isCELMacroFunction(funcName) {
 			// Non-operator, non-macro function or method.
+			var resultType *types.Type
+			if typed != nil {
+				resultType = typed.GetType(expr.ID())
+			}
 			if call.IsMemberFunction() {
 				targetStart := sourceInfo.GetStartLocation(call.Target().ID())
 				if targetStart.Line() > 0 {
 					targetByteOffset := celRuneOffsetToByteOffset(exprString, int32(targetStart.Column())+sourceInfo.ComputeOffset(int32(targetStart.Line()), 0))
 					start, end := findMethodNameAfterDot(targetByteOffset, funcName, exprString)
 					if start >= 0 {
-						collectHover(start, end, celFunctionHover(funcName, celEnv))
+						collectHover(start, end, celFunctionHover(funcName, celEnv, resultType))
 					}
 				}
 			} else if startLoc.Line() > 0 {
@@ -289,13 +300,13 @@ func walkCELExprForHover(
 				funcStart := celByteOffset - len(funcName)
 				funcEnd := funcStart + len(funcName)
 				if funcStart >= 0 && funcEnd <= len(exprString) && exprString[funcStart:funcEnd] == funcName {
-					collectHover(funcStart, funcEnd, celFunctionHover(funcName, celEnv))
+					collectHover(funcStart, funcEnd, celFunctionHover(funcName, celEnv, resultType))
 				}
 			}
 		}
 
 		for _, arg := range call.Args() {
-			walkCELExprForHover(arg, sourceInfo, exprString, celEnv, collectHover, compVars)
+			walkCELExprForHover(arg, sourceInfo, exprString, celEnv, typed, collectHover, compVars)
 		}
 
 	case ast.LiteralKind:
@@ -315,25 +326,25 @@ func walkCELExprForHover(
 
 	case ast.ListKind:
 		for _, elem := range expr.AsList().Elements() {
-			walkCELExprForHover(elem, sourceInfo, exprString, celEnv, collectHover, compVars)
+			walkCELExprForHover(elem, sourceInfo, exprString, celEnv, typed, collectHover, compVars)
 		}
 
 	case ast.MapKind:
 		for _, entry := range expr.AsMap().Entries() {
 			mapEntry := entry.AsMapEntry()
-			walkCELExprForHover(mapEntry.Key(), sourceInfo, exprString, celEnv, collectHover, compVars)
-			walkCELExprForHover(mapEntry.Value(), sourceInfo, exprString, celEnv, collectHover, compVars)
+			walkCELExprForHover(mapEntry.Key(), sourceInfo, exprString, celEnv, typed, collectHover, compVars)
+			walkCELExprForHover(mapEntry.Value(), sourceInfo, exprString, celEnv, typed, collectHover, compVars)
 		}
 
 	case ast.StructKind:
 		for _, field := range expr.AsStruct().Fields() {
-			walkCELExprForHover(field.AsStructField().Value(), sourceInfo, exprString, celEnv, collectHover, compVars)
+			walkCELExprForHover(field.AsStructField().Value(), sourceInfo, exprString, celEnv, typed, collectHover, compVars)
 		}
 
 	case ast.ComprehensionKind:
 		comp := expr.AsComprehension()
-		walkCELExprForHover(comp.IterRange(), sourceInfo, exprString, celEnv, collectHover, compVars)
-		walkCELExprForHover(comp.AccuInit(), sourceInfo, exprString, celEnv, collectHover, compVars)
+		walkCELExprForHover(comp.IterRange(), sourceInfo, exprString, celEnv, typed, collectHover, compVars)
+		walkCELExprForHover(comp.AccuInit(), sourceInfo, exprString, celEnv, typed, collectHover, compVars)
 
 		extendedVars := compVars
 		if comp.IterVar() != "" || comp.AccuVar() != "" {
@@ -351,9 +362,9 @@ func walkCELExprForHover(
 			}
 		}
 
-		walkCELExprForHover(comp.LoopCondition(), sourceInfo, exprString, celEnv, collectHover, extendedVars)
-		walkCELExprForHover(comp.LoopStep(), sourceInfo, exprString, celEnv, collectHover, extendedVars)
-		walkCELExprForHover(comp.Result(), sourceInfo, exprString, celEnv, collectHover, extendedVars)
+		walkCELExprForHover(comp.LoopCondition(), sourceInfo, exprString, celEnv, typed, collectHover, extendedVars)
+		walkCELExprForHover(comp.LoopStep(), sourceInfo, exprString, celEnv, typed, collectHover, extendedVars)
+		walkCELExprForHover(comp.Result(), sourceInfo, exprString, celEnv, typed, collectHover, extendedVars)
 	}
 }
 
@@ -421,8 +432,9 @@ func celKeywordHover(name string) string {
 }
 
 // celFunctionHover returns hover markdown for a CEL function (including operators and type conversions).
-// It looks up the function declaration in the CEL environment for upstream documentation.
-func celFunctionHover(funcName string, celEnv *cel.Env) string {
+// It looks up the function declaration in the CEL environment for upstream documentation, and
+// includes resultType, the type of the call, if it is not nil.
+func celFunctionHover(funcName string, celEnv *cel.Env, resultType *types.Type) string {
 	funcs := celEnv.Functions()
 	funcDecl, ok := funcs[funcName]
 	if !ok {
@@ -446,6 +458,9 @@ func celFunctionHover(funcName string, celEnv *cel.Env) string {
 		} else {
 			result = fmt.Sprintf("`%s()` — function", funcName)
 		}
+	}
+	if resultType != nil {
+		result += fmt.Sprintf("\n\n**Return type**: `%s`", resultType)
 	}
 	if link := celFunctionDocumentationLink(funcName); link != "" {
 		result += "\n\n" + link

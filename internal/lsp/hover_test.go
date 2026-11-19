@@ -63,7 +63,9 @@ type hoverTestCase struct {
 	line     uint32
 	char     uint32
 	contains string // empty string means expect no hover
-	desc     string
+	// notContains, if set, must not appear in the hover.
+	notContains string
+	desc        string
 }
 
 func TestHover(t *testing.T) {
@@ -122,6 +124,9 @@ func TestHover(t *testing.T) {
 		{name: "size_overloads", file: "testdata/hover/functions.cel", line: 0, char: 1, contains: "**Overloads**", desc: "'size' has overloads"},
 		{name: "int_type_conversion", file: "testdata/hover/functions.cel", line: 0, char: 17, contains: "int", desc: "'int' type conversion"},
 		{name: "int_description", file: "testdata/hover/functions.cel", line: 0, char: 17, contains: "convert a value to an int", desc: "'int' description"},
+		{name: "size_return_type", file: "testdata/hover/functions.cel", line: 0, char: 1, contains: "**Return type**: `int`", desc: "'size' return type"},
+		{name: "int_return_type", file: "testdata/hover/functions.cel", line: 0, char: 17, contains: "**Return type**: `int`", desc: "'int' return type"},
+		{name: "size_unchecked_no_return_type", file: "testdata/hover/unchecked.cel", line: 0, char: 1, contains: "**Overloads**", notContains: "**Return type**", desc: "no return type when the expression does not type-check"},
 
 		// Type conversions tests
 		{name: "string_conversion", file: "testdata/hover/type_conversions.cel", line: 0, char: 0, contains: "convert a value to a string", desc: "'string()' description"},
@@ -132,6 +137,7 @@ func TestHover(t *testing.T) {
 		// Methods tests
 		{name: "startswith_method", file: "testdata/hover/methods.cel", line: 0, char: 8, contains: "startsWith", desc: "'startsWith' method"},
 		{name: "startswith_description", file: "testdata/hover/methods.cel", line: 0, char: 8, contains: "prefix", desc: "'startsWith' description"},
+		{name: "startswith_return_type", file: "testdata/hover/methods.cel", line: 0, char: 8, contains: "**Return type**: `bool`", desc: "'startsWith' return type"},
 		{name: "contains_method", file: "testdata/hover/methods.cel", line: 0, char: 38, contains: "contains", desc: "'contains' method"},
 		{name: "contains_description", file: "testdata/hover/methods.cel", line: 0, char: 38, contains: "substring", desc: "'contains' description"},
 
@@ -248,6 +254,10 @@ func TestHover(t *testing.T) {
 				requireNoHover(t, tt.file, tt.line, tt.char, tt.desc)
 			} else {
 				requireHoverContains(t, tt.file, tt.line, tt.char, tt.contains, tt.desc)
+				if tt.notContains != "" {
+					markup, _ := getHover(t, tt.file, tt.line, tt.char).Contents.(*protocol.MarkupContent)
+					ok.True(t, !strings.Contains(markup.Value, tt.notContains))
+				}
 			}
 		})
 	}
