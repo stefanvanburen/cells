@@ -342,6 +342,47 @@ functions:
 	}
 }
 
+func TestDiagnosticsUnusedVariables(t *testing.T) {
+	t.Parallel()
+
+	tests := []struct {
+		name    string
+		content string
+		// want holds the unused names, with their ranges as line:start-end.
+		want []string
+	}{
+		{name: "loop variable", content: "[1, 2].all(x, true)", want: []string{"x 0:11-12"}},
+		{name: "bind variable", content: "cel.bind(v, 1, 2)", want: []string{"v 0:9-10"}},
+		{
+			name:    "nested, on later lines",
+			content: "[1].map(x,\n  [2].filter(y, true))",
+			want:    []string{"x 0:8-9", "y 1:13-14"},
+		},
+		{name: "second of two variables", content: "{'a': 1}.all(k, v, k != '')", want: []string{"v 0:16-17"}},
+		{name: "used", content: "[1, 2].map(x, x * 2)"},
+		{name: "shadowed by an inner variable", content: "[1].map(x, [2].map(x, x))", want: []string{"x 0:8-9"}},
+		{name: "first of two variables", content: "{'a': 1}.all(k, v, v > 0)"},
+		{name: "underscore", content: "[1, 2].all(_x, true)"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			celPath := filepath.Join(t.TempDir(), "a.cel")
+			conn := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{Extensions: []string{"bindings", "comprehensions"}})
+			initializeServer(t, conn, "")
+			var got []string
+			for _, d := range openAndDiagnose(t, conn, celPath, tt.content) {
+				ok.Equal(t, d.Severity, protocol.DiagnosticSeverityHint)
+				ok.Equal(t, d.Tags.Slice(), []protocol.DiagnosticTag{protocol.DiagnosticTagUnnecessary})
+				name := strings.TrimSuffix(strings.TrimPrefix(diagMessage(d), "'"), "' is never used")
+				got = append(got, fmt.Sprintf("%s %d:%d-%d", name, d.Range.Start.Line, d.Range.Start.Character, d.Range.End.Character))
+			}
+			ok.Equal(t, got, tt.want)
+		})
+	}
+}
+
 // --- Clean (no diagnostic) tests ---
 
 func TestDiagnosticsClean(t *testing.T) {

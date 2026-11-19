@@ -102,7 +102,9 @@ func (s *server) diagnosticsFor(f *file) []protocol.Diagnostic {
 
 // computeDiagnostics parses and type-checks a CEL file, returning LSP
 // diagnostics. Parse failures are always errors; checkSeverity says how to
-// report a type-check failure, per the function of the same name.
+// report a type-check failure, per the function of the same name. An
+// expression that parses also gets hints for the names its macros bind and
+// never use.
 func computeDiagnostics(f *file, celEnv *cel.Env, checkSeverity protocol.DiagnosticSeverity) []protocol.Diagnostic {
 	if strings.TrimSpace(f.content) == "" {
 		return []protocol.Diagnostic{}
@@ -112,18 +114,16 @@ func computeDiagnostics(f *file, celEnv *cel.Env, checkSeverity protocol.Diagnos
 	if parsed == nil {
 		return issuesToDiagnostics(f.content, parseIssues, protocol.DiagnosticSeverityError, nil)
 	}
+	diagnostics := []protocol.Diagnostic{}
 	if checked, checkIssues := f.check(celEnv); checked == nil {
 		tokens := newSourceTokens(f.content, parsed.NativeRep().SourceInfo())
-		return issuesToDiagnostics(f.content, checkIssues, checkSeverity, tokens)
-	}
-	if val, ok := f.constantValue(celEnv); ok {
+		diagnostics = issuesToDiagnostics(f.content, checkIssues, checkSeverity, tokens)
+	} else if val, ok := f.constantValue(celEnv); ok {
 		if evalErr, isErr := val.(*types.Err); isErr {
-			return []protocol.Diagnostic{constantErrorDiagnostic(f.content, parsed.NativeRep(), evalErr)}
+			diagnostics = append(diagnostics, constantErrorDiagnostic(f.content, parsed.NativeRep(), evalErr))
 		}
 	}
-
-	// No errors — clear diagnostics.
-	return []protocol.Diagnostic{}
+	return append(diagnostics, unusedVariableDiagnostics(f, celEnv)...)
 }
 
 // constantErrorDiagnostic reports the error an expression that takes no input

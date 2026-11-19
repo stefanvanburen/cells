@@ -77,10 +77,15 @@ func Check(content string, opts Options) ([]CheckDiagnostic, error) {
 	return toCheckDiagnostics(computeDiagnostics(&file{uri: cliURI, content: content}, docEnv.celEnv, docEnv.checkSeverity)), nil
 }
 
-// toCheckDiagnostics converts LSP diagnostics to their command-line form.
+// toCheckDiagnostics converts LSP diagnostics to their command-line form. Hints,
+// such as a variable a macro binds and never uses, are left out: they point at
+// something to tidy rather than anything wrong.
 func toCheckDiagnostics(diags []protocol.Diagnostic) []CheckDiagnostic {
 	result := make([]CheckDiagnostic, 0, len(diags))
 	for _, d := range diags {
+		if d.Severity == protocol.DiagnosticSeverityHint {
+			continue
+		}
 		sev := "error"
 		if d.Severity == protocol.DiagnosticSeverityWarning {
 			sev = "warning"
