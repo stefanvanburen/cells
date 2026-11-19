@@ -386,49 +386,79 @@ variables:
 // Diagnostics already published are made good when the configuration they were
 // judged against is edited, without the document itself being touched: the
 // editor is left showing errors for a name the configuration now declares
-// otherwise.
+// otherwise, or no errors under a configuration that no longer loads.
 func TestServerRefreshesDiagnosticsAfterConfigChange(t *testing.T) {
 	t.Parallel()
-	ctx := t.Context()
 
-	dir := t.TempDir()
-	configPath := filepath.Join(dir, lsp.ConfigFileName)
-	ok.MustNoError(t, os.WriteFile(configPath, []byte("name: test\n"), 0o600))
-	celPath := filepath.Join(dir, "a.cel")
-	celURI := uri.File(celPath)
-
-	dc := newDiagnosticCollector()
-	conn := newLSPClient(t, dc, lsp.Options{})
-	initializeServer(t, conn, "")
-
-	ok.MustNoError(t, conn.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
-		TextDocument: protocol.TextDocumentItem{
-			URI: celURI, LanguageID: "cel", Version: 1, Text: "count > 1",
-		},
-	}))
-	dc.waitForDiagnostics(t, 1)
-	ok.Equal(t, len(dc.latest().Diagnostics), 1, ok.Sprintf("diagnostics: %v", dc.latest().Diagnostics))
-
-	ok.MustNoError(t, os.WriteFile(configPath, []byte(`
+	const declaresCount = `
 name: test
 variables:
   - name: count
     type: "int"
-`), 0o600))
+`
+	tests := []struct {
+		name          string
+		before, after string
+		// wantMessages are substrings of the messages republished after the
+		// edit, one per diagnostic.
+		wantMessages []string
+	}{
+		{
+			name:   "declares the name",
+			before: "name: test\n",
+			after:  declaresCount,
+		},
+		{
+			name:         "stops loading",
+			before:       declaresCount,
+			after:        "name: [unterminated\n",
+			wantMessages: []string{lsp.ConfigFileName},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+			ctx := t.Context()
 
-	// Any request that resolves the document's environment notices the edit.
-	// This one is the request an editor makes without being asked, as soon as
-	// the file is on screen again.
-	var tokens protocol.SemanticTokens
-	_, err := conn.Call(ctx, "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
-		TextDocument: protocol.TextDocumentIdentifier{URI: celURI},
-	}, &tokens)
-	ok.MustNoError(t, err)
+			dir := t.TempDir()
+			configPath := filepath.Join(dir, lsp.ConfigFileName)
+			ok.MustNoError(t, os.WriteFile(configPath, []byte(tt.before), 0o600))
+			celURI := uri.File(filepath.Join(dir, "a.cel"))
 
-	dc.waitForDiagnostics(t, 2)
-	params := dc.latest()
-	ok.Equal(t, string(params.URI), string(celURI))
-	ok.Equal(t, len(params.Diagnostics), 0, ok.Sprintf("diagnostics: %v", params.Diagnostics))
+			dc := newDiagnosticCollector()
+			conn := newLSPClient(t, dc, lsp.Options{})
+			initializeServer(t, conn, "")
+
+			ok.MustNoError(t, conn.Notify(ctx, "textDocument/didOpen", protocol.DidOpenTextDocumentParams{
+				TextDocument: protocol.TextDocumentItem{
+					URI: celURI, LanguageID: "cel", Version: 1, Text: "count > 1",
+				},
+			}))
+			dc.waitForDiagnostics(t, 1)
+			published := dc.count()
+
+			ok.MustNoError(t, os.WriteFile(configPath, []byte(tt.after), 0o600))
+
+			// Any request that resolves the document's environment notices the
+			// edit. This one is the request an editor makes without being
+			// asked, as soon as the file is on screen again.
+			var tokens protocol.SemanticTokens
+			_, err := conn.Call(ctx, "textDocument/semanticTokens/full", protocol.SemanticTokensParams{
+				TextDocument: protocol.TextDocumentIdentifier{URI: celURI},
+			}, &tokens)
+			ok.MustNoError(t, err)
+
+			dc.waitForDiagnostics(t, published+1)
+			params := dc.latest()
+			ok.Equal(t, string(params.URI), string(celURI))
+			messages := diagMessages(params.Diagnostics)
+			if ok.Equal(t, len(messages), len(tt.wantMessages), ok.Sprintf("diagnostics: %v", messages)) {
+				for i, want := range tt.wantMessages {
+					ok.True(t, strings.Contains(messages[i], want), ok.Sprintf("message: %v", messages[i]))
+				}
+			}
+		})
+	}
 }
 
 // refreshRecorder is a client that supports the workspace refresh requests and
