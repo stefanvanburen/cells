@@ -149,24 +149,28 @@ func TestSignatureHelpWhileTyping(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name      string
-		src       string
-		wantLabel string // empty for no signature help
-		wantArg   uint32
+		name       string
+		src        string
+		wantLabel  string // empty for no signature help
+		wantArg    uint32
+		wantActive string // if set, the active signature's label
 	}{
-		{"open_paren", "size(|", "size(", 0},
-		{"after_comma", `"a".startsWith("b", |`, ".startsWith(", 1},
-		{"auto_paired", `size("a", |)`, "size(", 1},
-		{"member_call", `"a".startsWith(|`, ".startsWith(", 0},
-		{"generic_receiver", "{1: 2}.size(|", "map(<A>, <B>).size(", 0},
-		{"inside_list", "size([1, 2, |", "size(", 0},
-		{"inside_parens", "size((1 + |", "size(", 0},
-		{"nested", `size("a") + int(string(|`, "string(", 0},
-		{"after_comment", "size( // the input\n|", "size(", 0},
-		{"namespaced", "math.bitShiftLeft(1, |", "math.bitShiftLeft(", 1},
-		{"closed", `size("a")|`, "", 0},
-		{"macro", "[1].all(x, |", "", 0},
-		{"grouping_only", "(1 + |", "", 0},
+		{"open_paren", "size(|", "size(", 0, ""},
+		{"after_comma", `"a".startsWith("b", |`, ".startsWith(", 1, ""},
+		{"auto_paired", `size("a", |)`, "size(", 1, ""},
+		{"member_call", `"a".startsWith(|`, ".startsWith(", 0, ""},
+		{"generic_receiver", "{1: 2}.size(|", "map(<A>, <B>).size(", 0, ""},
+		{"inside_list", "size([1, 2, |", "size(", 0, ""},
+		{"inside_parens", "size((1 + |", "size(", 0, ""},
+		{"nested", `size("a") + int(string(|`, "string(", 0, ""},
+		{"after_comment", "size( // the input\n|", "size(", 0, ""},
+		{"namespaced", "math.bitShiftLeft(1, |", "math.bitShiftLeft(", 1, ""},
+		{"closed", `size("a")|`, "", 0, ""},
+		{"macro", "[1].all(x, |", "", 0, ""},
+		{"grouping_only", "(1 + |", "", 0, ""},
+		{"resolved_string", `size("a|") + 1`, "size(", 0, "size(string) -> int"},
+		{"resolved_map", "size({1: |2})", "size(", 0, "size(map(<A>, <B>)) -> int"},
+		{"resolved_member", "{1: 2}.size(|)", "map(<A>, <B>).size(", 0, "map(<A>, <B>).size() -> int"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -189,6 +193,10 @@ func TestSignatureHelpWhileTyping(t *testing.T) {
 			ok.NotNil(ok.Must(t), sig)
 			arg, _ := sig.ActiveParameter.Get()
 			ok.Equal(t, arg, tt.wantArg)
+			if tt.wantActive != "" {
+				active := sig.Signatures[*sig.ActiveSignature]
+				ok.Equal(t, active.Label, tt.wantActive)
+			}
 
 			// Some overload has the wanted label, and every parameter is
 			// a type or a name with its parentheses balanced, never a piece of

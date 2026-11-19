@@ -7,6 +7,7 @@ import (
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common"
+	"cel.dev/cel-go/common/ast"
 	"cel.dev/cel-go/parser/gen"
 	"go.lsp.dev/protocol"
 )
@@ -49,21 +50,49 @@ func computeSignatureHelp(f *file, celEnv *cel.Env, pos protocol.Position) (*pro
 		return nil, nil
 	}
 
-	sigs := generateSignatures(funcDecl, name, member)
+	sigs, overloadIDs := generateSignatures(funcDecl, name, member)
 	if len(sigs) == 0 {
 		return nil, nil
 	}
 
+	// When the file type-checks, the call resolved to some of the overloads;
+	// the first of them is the active signature.
+	var active uint32
+	if resolved := resolvedOverloads(f, celEnv, call.open); len(resolved) > 0 {
+		if i := slices.IndexFunc(overloadIDs, func(id string) bool { return slices.Contains(resolved, id) }); i >= 0 {
+			active = uint32(i)
+		}
+	}
+
 	return &protocol.SignatureHelp{
 		Signatures:      sigs,
-		ActiveSignature: &firstSignature,
+		ActiveSignature: &active,
 		ActiveParameter: protocol.NewNullable(call.arg),
 	}, nil
 }
 
-// firstSignature is always the active signature index; shared across
-// requests to avoid allocating a *uint32 per call.
-var firstSignature uint32
+// resolvedOverloads returns the IDs of the overloads that the call whose
+// argument list opens at the byte offset open resolved to, or nil if the file
+// does not type-check.
+func resolvedOverloads(f *file, celEnv *cel.Env, open int) []string {
+	checked, _ := f.check(celEnv)
+	if checked == nil {
+		return nil
+	}
+	typed := checked.NativeRep()
+	var ids []string
+	ast.PreOrderVisit(typed.Expr(), ast.NewExprVisitor(func(e ast.Expr) {
+		if e.Kind() != ast.CallKind {
+			return
+		}
+		// A call is located at the parenthesis that opens its arguments.
+		r, ok := typed.SourceInfo().GetOffsetRange(e.ID())
+		if ok && celRuneOffsetToByteOffset(f.content, r.Start) == open {
+			ids = typed.ReferenceMap()[e.ID()].OverloadIDs
+		}
+	}))
+	return ids
+}
 
 // callSite is a call whose argument list is open at the cursor.
 type callSite struct {
@@ -75,6 +104,8 @@ type callSite struct {
 	receiver bool
 	// arg is the index of the argument the cursor is in.
 	arg uint32
+	// open is the byte offset of the parenthesis that opens the arguments.
+	open int
 }
 
 // enclosingCall finds the innermost call whose argument list is open at
@@ -123,12 +154,12 @@ func enclosingCall(content string, offset int) (callSite, bool) {
 		for dot := t.step(i, -1); t.kind(dot) == gen.CELLexerDOT; dot = t.step(i, -1) {
 			prev := t.step(dot, -1)
 			if !t.isName(prev) {
-				return callSite{names: names, receiver: true, arg: b.commas}, true
+				return callSite{names: names, receiver: true, arg: b.commas, open: t.tokens[b.index].start}, true
 			}
 			names = append([]string{t.text(prev)}, names...)
 			i = prev
 		}
-		return callSite{names: names, arg: b.commas}, true
+		return callSite{names: names, arg: b.commas, open: t.tokens[b.index].start}, true
 	}
 	return callSite{}, false
 }
@@ -136,8 +167,10 @@ func enclosingCall(content string, offset int) (callSite, bool) {
 // generateSignatures creates protocol.SignatureInformation for overloads of a function.
 // funcDecl must implement the interface with Documentation() method.
 // If isMemberFunction is true, only member function overloads of name are
-// included; if false, only global function overloads are included.
-func generateSignatures(funcDecl any, name string, isMemberFunction bool) []protocol.SignatureInformation {
+// included; if false, only global function overloads are included. It also
+// returns the ID of the overload each signature documents, empty when it
+// documents no single overload.
+func generateSignatures(funcDecl any, name string, isMemberFunction bool) ([]protocol.SignatureInformation, []string) {
 	// Try to get documentation if available.
 	var doc *common.Doc
 	if documenter, ok := funcDecl.(interface{ Documentation() *common.Doc }); ok {
@@ -148,7 +181,7 @@ func generateSignatures(funcDecl any, name string, isMemberFunction bool) []prot
 		// Fallback for functions without documentation.
 		return []protocol.SignatureInformation{{
 			Label: "function()",
-		}}
+		}}, []string{""}
 	}
 
 	// If the main doc has a signature, use it as the primary signature.
@@ -162,12 +195,13 @@ func generateSignatures(funcDecl any, name string, isMemberFunction bool) []prot
 			if doc.Description != "" {
 				sig.Documentation = protocol.String(doc.Description)
 			}
-			return []protocol.SignatureInformation{sig}
+			return []protocol.SignatureInformation{sig}, []string{""}
 		}
 	}
 
 	// Use child signatures as overloads, filtering by call type.
 	var sigs []protocol.SignatureInformation
+	var ids []string
 	for _, child := range doc.Children {
 		if child.Signature != "" && isSignatureMatchingCallType(child.Signature, name, isMemberFunction) {
 			sig := protocol.SignatureInformation{
@@ -178,17 +212,18 @@ func generateSignatures(funcDecl any, name string, isMemberFunction bool) []prot
 				sig.Documentation = protocol.String(child.Description)
 			}
 			sigs = append(sigs, sig)
+			ids = append(ids, child.Name)
 		}
 	}
 
 	if len(sigs) > 0 {
-		return sigs
+		return sigs, ids
 	}
 
 	// Final fallback.
 	return []protocol.SignatureInformation{{
 		Label: "function()",
-	}}
+	}}, []string{""}
 }
 
 // isSignatureMatchingCallType reports whether a signature of the function
