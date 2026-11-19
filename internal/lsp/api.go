@@ -31,7 +31,7 @@ func Format(content string, opts Options) (string, error) {
 	if err != nil {
 		if _, issues := docEnv.celEnv.Parse(content); issues.Err() != nil {
 			return "", &ParseError{
-				Diagnostics: toCheckDiagnostics(issuesToDiagnostics(content, issues, protocol.DiagnosticSeverityError)),
+				Diagnostics: toCheckDiagnostics(issuesToDiagnostics(content, issues, protocol.DiagnosticSeverityError, nil)),
 			}
 		}
 		return "", err

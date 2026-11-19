@@ -369,6 +369,9 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 			InlayHintProvider:         protocol.Boolean(true),
 			SelectionRangeProvider:    protocol.Boolean(true),
 			FoldingRangeProvider:      protocol.Boolean(true),
+			CodeActionProvider: &protocol.CodeActionOptions{
+				CodeActionKinds: []protocol.CodeActionKind{protocol.CodeActionKindQuickFix},
+			},
 		},
 		ServerInfo: protocol.ServerInfo{
 			Name:    serverName,

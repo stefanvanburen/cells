@@ -2,11 +2,14 @@ package lsp
 
 import (
 	"context"
+	"encoding/json"
 	"regexp"
 	"strings"
 
 	"cel.dev/cel-go/cel"
+	"cel.dev/cel-go/common"
 	"cel.dev/cel-go/common/operators"
+	"cel.dev/cel-go/parser/gen"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )
@@ -101,22 +104,42 @@ func computeDiagnostics(f *file, celEnv *cel.Env, checkSeverity protocol.Diagnos
 		return []protocol.Diagnostic{}
 	}
 
-	if parsed, parseIssues := f.parse(celEnv); parsed == nil {
-		return issuesToDiagnostics(f.content, parseIssues, protocol.DiagnosticSeverityError)
+	parsed, parseIssues := f.parse(celEnv)
+	if parsed == nil {
+		return issuesToDiagnostics(f.content, parseIssues, protocol.DiagnosticSeverityError, nil)
 	}
 	if checked, checkIssues := f.check(celEnv); checked == nil {
-		return issuesToDiagnostics(f.content, checkIssues, checkSeverity)
+		tokens := newSourceTokens(f.content, parsed.NativeRep().SourceInfo())
+		return issuesToDiagnostics(f.content, checkIssues, checkSeverity, tokens)
 	}
 
 	// No errors — clear diagnostics.
 	return []protocol.Diagnostic{}
 }
 
+// diagnosticData is the data an undeclared-reference diagnostic carries for
+// its quick fixes.
+type diagnosticData struct {
+	// Suggestions are the declared names cel-go suggests in place of the
+	// undeclared one, which the diagnostic's range covers exactly.
+	Suggestions []string `json:"suggestions"`
+}
+
 // issuesToDiagnostics converts cel.Issues to LSP diagnostics.
-func issuesToDiagnostics(content string, issues *cel.Issues, severity protocol.DiagnosticSeverity) []protocol.Diagnostic {
+//
+// tokens, when not nil, is the lexed source of the parse the issues were found
+// in. With it, an undeclared reference is reported on the name itself, rather
+// than from the position cel-go records to the end of the line, and carries the
+// names cel-go suggests in its place.
+func issuesToDiagnostics(content string, issues *cel.Issues, severity protocol.DiagnosticSeverity, tokens *sourceTokens) []protocol.Diagnostic {
 	errs := issues.Errors()
 	diagnostics := make([]protocol.Diagnostic, 0, len(errs))
 	for _, e := range errs {
+		if d, ok := undeclaredDiagnostic(content, e, tokens); ok {
+			d.Severity = severity
+			diagnostics = append(diagnostics, d)
+			continue
+		}
 		loc := e.Location
 		// cel-go uses 1-based lines and 0-based rune columns. LSP uses
 		// 0-based lines and UTF-16 columns, so convert through the source
@@ -142,6 +165,48 @@ func issuesToDiagnostics(content string, issues *cel.Issues, severity protocol.D
 	}
 	return diagnostics
 }
+
+// undeclaredDiagnostic reports an undeclared reference on the name it refers
+// to, and reports false for any other issue, or when tokens is nil or the name
+// cannot be found.
+//
+// cel-go records an identifier at its name but a call at its opening
+// parenthesis, so the name is either the token at the recorded position or the
+// one before it.
+func undeclaredDiagnostic(content string, e *common.Error, tokens *sourceTokens) (protocol.Diagnostic, bool) {
+	m := undeclaredRe.FindStringSubmatch(e.Message)
+	if m == nil || tokens == nil {
+		return protocol.Diagnostic{}, false
+	}
+	name := m[2]
+	i := tokens.anchor(e.ExprID)
+	if i >= 0 && tokens.kind(i) == gen.CELLexerLPAREN {
+		i = tokens.step(i, -1)
+	}
+	if i < 0 || !tokens.isName(i) || tokens.text(i) != name {
+		return protocol.Diagnostic{}, false
+	}
+	d := protocol.Diagnostic{
+		Range:   lspRange(content, tokens.tokens[i].start, tokens.tokens[i].end),
+		Source:  protocol.NewOptional(serverName),
+		Message: protocol.String(cleanMessage(e.Message)),
+	}
+	if s := didYouMeanRe.FindStringSubmatch(e.Message); s != nil {
+		suggestions := []string{s[1]}
+		if s[2] != "" {
+			suggestions = append(suggestions, s[2])
+		}
+		// Marshaling a struct of strings cannot fail.
+		d.Data, _ = json.Marshal(diagnosticData{Suggestions: suggestions})
+	}
+	return d, true
+}
+
+// didYouMeanRe matches the end of an undeclared-reference message that
+// suggests one or two declared names. A name the environment lacks a library
+// for is suggested in another form, and is left out: replacing the reference
+// with it would only trade one error for another.
+var didYouMeanRe = regexp.MustCompile(`\(did you mean '([^']+)'(?: or '([^']+)')?\?\)$`)
 
 // operatorNameRe matches quoted cel-go internal operator names like '_+_', '-_', '!_', '@in'.
 var operatorNameRe = regexp.MustCompile(`'([^']+)'`)
