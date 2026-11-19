@@ -1,6 +1,7 @@
 package lsp
 
 import (
+	"cmp"
 	"context"
 	"encoding/json"
 	"regexp"
@@ -8,6 +9,7 @@ import (
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common"
+	"cel.dev/cel-go/common/env"
 	"cel.dev/cel-go/common/operators"
 	"cel.dev/cel-go/parser/gen"
 	"go.lsp.dev/protocol"
@@ -120,9 +122,14 @@ func computeDiagnostics(f *file, celEnv *cel.Env, checkSeverity protocol.Diagnos
 // diagnosticData is the data an undeclared-reference diagnostic carries for
 // its quick fixes.
 type diagnosticData struct {
-	// Suggestions are the declared names cel-go suggests in place of the
-	// undeclared one, which the diagnostic's range covers exactly.
-	Suggestions []string `json:"suggestions"`
+	// Suggestions are the names cel-go suggests in place of the undeclared
+	// one, which the diagnostic's range covers exactly.
+	Suggestions []string `json:"suggestions,omitempty"`
+
+	// Extensions are the extensions that declare the undeclared name, or the
+	// one name in Suggestions when there are any: enabling one of them
+	// resolves the reference.
+	Extensions []string `json:"extensions,omitempty"`
 }
 
 // issuesToDiagnostics converts cel.Issues to LSP diagnostics.
@@ -180,32 +187,29 @@ func undeclaredDiagnostic(content string, e *common.Error, tokens *sourceTokens)
 	}
 	name := m[2]
 	i := tokens.anchor(e.ExprID)
-	if i >= 0 && tokens.kind(i) == gen.CELLexerLPAREN {
+	call := i >= 0 && tokens.kind(i) == gen.CELLexerLPAREN
+	if call {
 		i = tokens.step(i, -1)
 	}
 	if i < 0 || !tokens.isName(i) || tokens.text(i) != name {
 		return protocol.Diagnostic{}, false
 	}
+	fixes := undeclaredFixes(m, call)
 	d := protocol.Diagnostic{
 		Range:   lspRange(content, tokens.tokens[i].start, tokens.tokens[i].end),
 		Source:  protocol.NewOptional(serverName),
-		Message: protocol.String(cleanMessage(e.Message)),
+		Message: protocol.String(undeclaredMessage(m, fixes)),
 	}
-	if s := didYouMeanRe.FindStringSubmatch(e.Message); s != nil {
-		suggestions := []string{s[1]}
-		if s[2] != "" {
-			suggestions = append(suggestions, s[2])
-		}
+	if len(fixes.Suggestions)+len(fixes.Extensions) > 0 {
 		// Marshaling a struct of strings cannot fail.
-		d.Data, _ = json.Marshal(diagnosticData{Suggestions: suggestions})
+		d.Data, _ = json.Marshal(fixes)
 	}
 	return d, true
 }
 
 // didYouMeanRe matches the end of an undeclared-reference message that
 // suggests one or two declared names. A name the environment lacks a library
-// for is suggested in another form, and is left out: replacing the reference
-// with it would only trade one error for another.
+// for is suggested in another form, which suggestionRe matches instead.
 var didYouMeanRe = regexp.MustCompile(`\(did you mean '([^']+)'(?: or '([^']+)')?\?\)$`)
 
 // operatorNameRe matches quoted cel-go internal operator names like '_+_', '-_', '!_', '@in'.
@@ -234,15 +238,79 @@ func extensionHint(msg string) string {
 	if m == nil {
 		return msg
 	}
+	return undeclaredMessage(m, undeclaredFixes(m, false))
+}
+
+// undeclaredMessage returns the message for the undeclared reference whose
+// message undeclaredRe matched as m, with the hint cel-go gave replaced when
+// fixes enables an extension.
+func undeclaredMessage(m []string, fixes diagnosticData) string {
+	switch {
+	case len(fixes.Extensions) == 0:
+		return m[0]
+	case len(fixes.Suggestions) == 0:
+		return m[1] + " (" + enableExtensions(fixes.Extensions) + ")"
+	default:
+		return m[1] + " (did you mean '" + fixes.Suggestions[0] + "'?, " + enableExtensions(fixes.Extensions) + ")"
+	}
+}
+
+// undeclaredFixes returns what would resolve the undeclared reference whose
+// message undeclaredRe matched as m:
+//
+//   - the extensions that declare the name, when it is in one;
+//   - the name cel-go suggests in its place and the extensions that declare
+//     that, when the suggestion is in one;
+//   - the one or two declared names cel-go suggests in its place;
+//   - when call is set, so that the name is a function's, the closest
+//     function an extension declares and that extension, if one is close
+//     enough. cel-go only suggests such names for the optional library.
+func undeclaredFixes(m []string, call bool) diagnosticData {
 	if exts := extensionsByName()[m[2]]; len(exts) > 0 {
-		return m[1] + " (" + enableExtensions(exts) + ")"
+		return diagnosticData{Extensions: exts}
 	}
 	if s := suggestionRe.FindStringSubmatch(m[3]); s != nil {
 		if exts := extensionsByName()[s[1]]; len(exts) > 0 {
-			return m[1] + " (did you mean '" + s[1] + "'?, " + enableExtensions(exts) + ")"
+			return diagnosticData{Suggestions: []string{s[1]}, Extensions: exts}
+		}
+		return diagnosticData{}
+	}
+	if s := didYouMeanRe.FindStringSubmatch(m[0]); s != nil {
+		if s[2] != "" {
+			return diagnosticData{Suggestions: []string{s[1], s[2]}}
+		}
+		return diagnosticData{Suggestions: []string{s[1]}}
+	}
+	if call {
+		if s, ok := extensionSuggestion(m[2]); ok {
+			return diagnosticData{Suggestions: []string{s}, Extensions: extensionsByName()[s]}
 		}
 	}
-	return msg
+	return diagnosticData{}
+}
+
+// extensionSuggestion returns the name an extension declares that is closest
+// to name, within the edit distance cel-go allows its own suggestions. Unlike
+// cel-go, it does not fall back to names that name is a prefix of: a variable
+// cells was not told about is no misspelling of a longer function.
+func extensionSuggestion(name string) (string, bool) {
+	maxDist := 2
+	if len(name) <= 3 {
+		maxDist = 1
+	} else if len(name) > 8 {
+		maxDist = len(name) / 3
+	}
+	best, bestDist := "", maxDist+1
+	for candidate := range extensionsByName() {
+		if strings.Contains(candidate, ".") != strings.Contains(name, ".") {
+			continue
+		}
+		dist := env.EditDistance(name, candidate)
+		if dist < bestDist || dist == bestDist && cmp.Or(cmp.Compare(len(candidate), len(best)), strings.Compare(candidate, best)) < 0 {
+			best, bestDist = candidate, dist
+		}
+	}
+	return best, best != ""
 }
 
 // enableExtensions phrases the advice to enable one of exts.

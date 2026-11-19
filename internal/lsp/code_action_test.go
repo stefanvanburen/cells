@@ -11,21 +11,21 @@ import (
 	"go.vanburen.xyz/ok"
 )
 
-func TestCodeActionDidYouMean(t *testing.T) {
+func TestCodeActionQuickFixes(t *testing.T) {
 	t.Parallel()
 
+	// fix is a quick fix as the result of applying it.
 	type fix struct {
 		title     string
-		newText   string
-		edit      protocol.Range
 		preferred bool
+		// content is the document after the fix.
+		content string
+		// config is the configuration after the fix, or "" when the fix
+		// leaves it alone.
+		config string
 	}
-	at := func(line, startCol, endCol uint32) protocol.Range {
-		return protocol.Range{
-			Start: protocol.Position{Line: line, Character: startCol},
-			End:   protocol.Position{Line: line, Character: endCol},
-		}
-	}
+	const declaresCount = "name: test\nvariables:\n  - name: count\n    type_name: int\n"
+	const enablesMath = "name: test\nextensions:\n  - name: math\n"
 	tests := []struct {
 		name    string
 		config  string
@@ -39,26 +39,26 @@ func TestCodeActionDidYouMean(t *testing.T) {
 			name:    "global function",
 			content: "sise([1])",
 			cursor:  protocol.Position{Character: 2},
-			want:    []fix{{"Change to 'size'", "size", at(0, 0, 4), true}},
+			want:    []fix{{"Change to 'size'", true, "size([1])", ""}},
 		},
 		{
 			name:    "member function",
 			content: "'a'.startWith('a')",
 			cursor:  protocol.Position{Character: 6},
-			want:    []fix{{"Change to 'startsWith'", "startsWith", at(0, 4, 13), true}},
+			want:    []fix{{"Change to 'startsWith'", true, "'a'.startsWith('a')", ""}},
 		},
 		{
 			name:    "cursor just after the name",
 			content: "sise([1])",
 			cursor:  protocol.Position{Character: 4},
-			want:    []fix{{"Change to 'size'", "size", at(0, 0, 4), true}},
+			want:    []fix{{"Change to 'size'", true, "size([1])", ""}},
 		},
 		{
 			name:    "variable on a later line",
-			config:  "name: test\nvariables:\n  - name: count\n    type_name: int\n",
+			config:  declaresCount,
 			content: "1 < 2 &&\n  cuont > 1",
 			cursor:  protocol.Position{Line: 1, Character: 3},
-			want:    []fix{{"Change to 'count'", "count", at(1, 2, 7), true}},
+			want:    []fix{{"Change to 'count'", true, "1 < 2 &&\n  count > 1", ""}},
 		},
 		{
 			name:    "two suggestions",
@@ -66,8 +66,8 @@ func TestCodeActionDidYouMean(t *testing.T) {
 			content: "countr > 1",
 			cursor:  protocol.Position{Character: 1},
 			want: []fix{
-				{"Change to 'count'", "count", at(0, 0, 6), false},
-				{"Change to 'counter'", "counter", at(0, 0, 6), false},
+				{"Change to 'count'", false, "count > 1", ""},
+				{"Change to 'counter'", false, "counter > 1", ""},
 			},
 		},
 		{
@@ -87,9 +87,72 @@ func TestCodeActionDidYouMean(t *testing.T) {
 			cursor:  protocol.Position{Character: 2},
 		},
 		{
-			// The name is declared by an extension the environment lacks, so
-			// the diagnostic advises enabling it rather than a spelling.
-			name:    "extension not enabled",
+			name:    "extension added to the list",
+			config:  enablesMath,
+			content: "'a'.upperAscii()",
+			cursor:  protocol.Position{Character: 6},
+			want: []fix{{
+				"Enable the `strings` extension", true, "'a'.upperAscii()",
+				"name: test\nextensions:\n  - name: strings\n  - name: math\n",
+			}},
+		},
+		{
+			name:    "extension list keeps its indentation",
+			config:  "name: test\nextensions:\n- name: math\n  version: 1\n",
+			content: "'a'.upperAscii()",
+			cursor:  protocol.Position{Character: 6},
+			want: []fix{{
+				"Enable the `strings` extension", true, "'a'.upperAscii()",
+				"name: test\nextensions:\n- name: strings\n- name: math\n  version: 1\n",
+			}},
+		},
+		{
+			name:    "extension list started",
+			config:  declaresCount,
+			content: "'a'.upperAscii()",
+			cursor:  protocol.Position{Character: 6},
+			want: []fix{{
+				"Enable the `strings` extension", true, "'a'.upperAscii()",
+				declaresCount + "extensions:\n  - name: strings\n",
+			}},
+		},
+		{
+			name:    "extension list started after a last line without a newline",
+			config:  "name: test",
+			content: "'a'.upperAscii()",
+			cursor:  protocol.Position{Character: 6},
+			want: []fix{{
+				"Enable the `strings` extension", true, "'a'.upperAscii()",
+				"name: test\nextensions:\n  - name: strings\n",
+			}},
+		},
+		{
+			name:    "misspelled name in an extension",
+			config:  "name: test\n",
+			content: "'a'.upperAsci()",
+			cursor:  protocol.Position{Character: 6},
+			want: []fix{{
+				"Change to 'upperAscii' and enable the `strings` extension", true, "'a'.upperAscii()",
+				"name: test\nextensions:\n  - name: strings\n",
+			}},
+		},
+		{
+			// A name that is not called is a variable, however close it is
+			// to a function an extension declares.
+			name:    "variable near an extension function",
+			config:  "name: test\n",
+			content: "indexO > 1",
+			cursor:  protocol.Position{Character: 2},
+		},
+		{
+			// With no configuration there is nowhere to enable it.
+			name:    "extension without a configuration",
+			content: "'a'.upperAscii()",
+			cursor:  protocol.Position{Character: 6},
+		},
+		{
+			name:    "extension list in flow style",
+			config:  "name: test\nextensions: [{name: math}]\n",
 			content: "'a'.upperAscii()",
 			cursor:  protocol.Position{Character: 6},
 		},
@@ -101,8 +164,9 @@ func TestCodeActionDidYouMean(t *testing.T) {
 			ctx := t.Context()
 
 			dir := t.TempDir()
+			configPath := filepath.Join(dir, lsp.ConfigFileName)
 			if tt.config != "" {
-				ok.MustNoError(t, os.WriteFile(filepath.Join(dir, lsp.ConfigFileName), []byte(tt.config), 0o600))
+				ok.MustNoError(t, os.WriteFile(configPath, []byte(tt.config), 0o600))
 			}
 			celPath := filepath.Join(dir, "a.cel")
 			conn := newLSPClient(t, protocol.UnimplementedClient{}, lsp.Options{})
@@ -121,9 +185,18 @@ func TestCodeActionDidYouMean(t *testing.T) {
 			for _, a := range actions {
 				ok.Equal(t, *a.Kind, protocol.CodeActionKindQuickFix)
 				ok.Equal(t, len(a.Diagnostics), 1)
-				edits := a.Edit.Changes[uri.File(celPath)]
-				ok.Equal(t, len(edits), 1)
-				got = append(got, fix{a.Title, edits[0].NewText, edits[0].Range, *a.IsPreferred})
+				applied := fix{title: a.Title, preferred: *a.IsPreferred, content: tt.content}
+				for target, edits := range a.Edit.Changes {
+					switch target {
+					case uri.File(celPath):
+						applied.content = applyEdits(t, tt.content, edits)
+					case uri.File(configPath):
+						applied.config = applyEdits(t, tt.config, edits)
+					default:
+						t.Errorf("edit to %s", target)
+					}
+				}
+				got = append(got, applied)
 			}
 			ok.Equal(t, got, tt.want)
 		})
