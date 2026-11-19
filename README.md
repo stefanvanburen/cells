@@ -15,7 +15,7 @@ $ go install go.vanburen.xyz/cells/cmd/cells@latest
 * Diagnostics (including expressions that take no input and always fail, such as `1 / 0`, and hints for unused macro variables)
 * Quick fixes (the spellings CEL suggests for undeclared names, and enabling the extension that declares them)
 * Formatting (keeps comments and literals as written, breaking lines at 100 columns)
-* Hover (including function return types, declared variable types, and message field types and comments)
+* Hover (including function return types, the values of subexpressions that take no input, declared variable types, and message field types and comments)
 * References
 * Go to definition
 * Completion (including declared variables, the variables macros bind, and message fields)

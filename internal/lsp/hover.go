@@ -85,6 +85,9 @@ func computeHover(f *file, docEnv *environment, pos protocol.Position) (*protoco
 	if best == nil {
 		return nil, nil
 	}
+	if value, ok := constantSubexpressionValue(f.content, celEnv, nativeAST, best.byteStart, best.byteEnd); ok {
+		best.markdown += "\n\n**Value**: " + inlineCode(value)
+	}
 
 	startLine, startCol := byteOffsetToLineCol(f.content, best.byteStart)
 	endLine, endCol := byteOffsetToLineCol(f.content, best.byteEnd)
@@ -99,6 +102,69 @@ func computeHover(f *file, docEnv *environment, pos protocol.Position) (*protoco
 			End:   protocol.Position{Line: endLine, Character: endCol},
 		},
 	}, nil
+}
+
+// constantSubexpressionValue returns the value of the innermost expression
+// around [byteStart, byteEnd), when that is a call, comprehension, or field
+// selection that has a value without any input: the 6 of 2 * 3 in 1 + 2 * 3,
+// hovering over the *. A literal or a name is left alone, since its value is
+// what it says.
+//
+// The expression's source is checked and evaluated on its own. One that uses
+// a name a macro binds outside it does not check that way, which is what keeps
+// a loop body from being given a value.
+func constantSubexpressionValue(content string, celEnv *cel.Env, nativeAST *ast.AST, byteStart, byteEnd int) (string, bool) {
+	b := newSpanBuilder(newSourceTokens(content, nativeAST.SourceInfo()))
+	b.build(nativeAST.Expr())
+	var innermost *spanNode
+	var innermostID int64
+	for id, n := range b.spans {
+		if n.start < 0 || n.start > byteStart || byteEnd > n.end {
+			continue
+		}
+		if innermost == nil || n.end-n.start < innermost.end-innermost.start {
+			innermost, innermostID = n, id
+		}
+	}
+	if innermost == nil {
+		return "", false
+	}
+	// A name a macro declares has a span but no expression of its own: the
+	// expansion drops it.
+	expr := findExprByID(nativeAST.Expr(), innermostID)
+	if expr == nil {
+		return "", false
+	}
+	switch expr.Kind() {
+	case ast.CallKind, ast.ComprehensionKind, ast.SelectKind:
+	default:
+		return "", false
+	}
+	sub := &file{content: content[innermost.start:innermost.end]}
+	val, ok := sub.constantValue(celEnv)
+	if !ok || types.IsError(val) {
+		return "", false
+	}
+	return types.Format(val), true
+}
+
+// inlineCode renders s as a Markdown code span, fenced with more backticks
+// than any run of them within it.
+func inlineCode(s string) string {
+	longest, run := 0, 0
+	for _, r := range s {
+		if r == '`' {
+			run++
+			longest = max(longest, run)
+		} else {
+			run = 0
+		}
+	}
+	fence := strings.Repeat("`", longest+1)
+	if longest > 0 {
+		return fence + " " + s + " " + fence
+	}
+	return fence + s + fence
 }
 
 // collectDeclaredHovers reports what the environment knows about the names in

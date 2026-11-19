@@ -245,6 +245,14 @@ func TestHover(t *testing.T) {
 		{name: "index_header", file: "testdata/hover/index.cel", line: 0, char: 9, contains: "**Operator**: `[`", desc: "index operator shows header"},
 		{name: "index_description", file: "testdata/hover/index.cel", line: 0, char: 9, contains: "select a value from a list", desc: "index operator shows description"},
 
+		// Values of subexpressions that take no input
+		{name: "value_call", file: "testdata/hover/constant_values.cel", line: 0, char: 1, contains: "**Value**: `2`", desc: "'size' shows the call's value"},
+		{name: "value_macro", file: "testdata/hover/constant_values.cel", line: 0, char: 13, contains: "**Value**: `[2, 4]`", desc: "'map' shows the comprehension's value"},
+		{name: "value_not_in_loop_body", file: "testdata/hover/constant_values.cel", line: 0, char: 21, contains: "**Operator**: `*`", notContains: "**Value**", desc: "'*' using a loop variable has no value"},
+		{name: "value_innermost_operator", file: "testdata/hover/constant_values.cel", line: 0, char: 31, contains: "**Value**: `6`", desc: "'*' shows its own value, not the sum's"},
+		{name: "value_outer_operator", file: "testdata/hover/constant_values.cel", line: 0, char: 27, contains: "**Value**: `8`", desc: "'+' shows the sum's value"},
+		{name: "value_with_backtick", file: "testdata/hover/constant_values.cel", line: 0, char: 45, contains: "**Value**: `` \"a`bc\" ``", desc: "a value holding a backtick is fenced with two"},
+
 		// Token boundary tests
 		{name: "token_boundary_and_first", file: "testdata/hover/operators.cel", line: 0, char: 6, contains: "logically AND", desc: "'&&' first char"},
 		{name: "token_boundary_and_second", file: "testdata/hover/operators.cel", line: 0, char: 7, contains: "logically AND", desc: "'&&' second char"},
