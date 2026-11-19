@@ -116,7 +116,7 @@ func TestExtensionFactories(t *testing.T) {
 		{"comprehensions", `[1, 2].transformList(i, v, v * 2)`},
 		{"encoders", `json.parse("1").orValue(0)`},
 		{"hmac", `hmac.compute(b"msg", b"key", hmac.HS256)`},
-		{"jwt", `jwt.parse("a.b.c")`},
+		{"jwt", `jwt.parse("eyJhbGciOiJub25lIn0.eyJpc3MiOiJhIiwic3ViIjoiYiIsImF1ZCI6ImMiLCJleHAiOjQxMDI0NDQ4MDAsImlhdCI6MCwibmJmIjowfQ.")`},
 		{"lists", `[1, 2].distinct()`},
 		{"math", `math.greatest(1, 2, 3)`},
 		{"network", `cidr("10.0.0.0/8").containsIP(ip("10.1.2.3"))`},

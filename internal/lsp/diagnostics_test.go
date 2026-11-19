@@ -275,6 +275,73 @@ func TestDiagnosticsLiteralValidation(t *testing.T) {
 	}
 }
 
+func TestDiagnosticsConstantErrors(t *testing.T) {
+	t.Parallel()
+
+	// declaresTwice declares a function, which a configuration gives no
+	// implementation, alongside a variable.
+	const declaresTwice = `
+name: test
+variables:
+  - name: x
+    type_name: int
+functions:
+  - name: twice
+    overloads:
+      - id: twice_int
+        args: [{type_name: int}]
+        return: {type_name: int}
+`
+	tests := []struct {
+		name    string
+		config  string
+		content string
+		// want is the one diagnostic expected, or nil for none.
+		want *lsp.CheckDiagnostic
+	}{
+		{
+			name:    "division by zero",
+			content: "1 + 1 / 0",
+			want:    &lsp.CheckDiagnostic{Line: 1, Col: 5, EndLine: 1, EndCol: 10, Severity: "error", Message: "always fails: division by zero"},
+		},
+		{
+			name:    "missing map key",
+			content: "{'a': 1}['b']",
+			want:    &lsp.CheckDiagnostic{Line: 1, Col: 1, EndLine: 1, EndCol: 14, Severity: "error", Message: "always fails: no such key: b"},
+		},
+		{
+			name:    "inside a comprehension",
+			content: "[1, 2].map(i, i / 0)",
+			want:    &lsp.CheckDiagnostic{Line: 1, Col: 15, EndLine: 1, EndCol: 20, Severity: "error", Message: "always fails: division by zero"},
+		},
+		{name: "valid", content: "1 + 2"},
+		{name: "error absorbed by a logical operator", content: "1 / 0 > 0 || true"},
+		{name: "depends on a variable", config: declaresTwice, content: "x / 0 > 1"},
+		{name: "calls a function without an implementation", config: declaresTwice, content: "twice(1) > 1"},
+		{
+			name:    "costs too much to evaluate",
+			content: "[0,0,0,0,0,0,0,0,0,0].map(a, [0,0,0,0,0,0,0,0,0,0].map(b, [0,0,0,0,0,0,0,0,0,0].map(c, [0,0,0,0,0,0,0,0,0,0].map(d, [0,0,0,0,0,0,0,0,0,0].map(e, [0,0,0,0,0,0,0,0,0,0].map(f, 1)))))).size() == 1 / 0",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Parallel()
+
+			opts := lsp.Options{}
+			if tt.config != "" {
+				opts.ConfigPath = writeConfig(t, tt.config)
+			}
+			diags, err := lsp.Check(tt.content, opts)
+			ok.MustNoError(t, err)
+			if tt.want == nil {
+				ok.Equal(t, len(diags), 0, ok.Sprintf("diagnostics: %v", diags))
+				return
+			}
+			ok.Equal(t, diags, []lsp.CheckDiagnostic{*tt.want})
+		})
+	}
+}
+
 // --- Clean (no diagnostic) tests ---
 
 func TestDiagnosticsClean(t *testing.T) {

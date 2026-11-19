@@ -7,6 +7,7 @@ import (
 	celast "cel.dev/cel-go/common/ast"
 	"cel.dev/cel-go/common/containers"
 	"cel.dev/cel-go/common/decls"
+	"cel.dev/cel-go/common/types/ref"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
 )
@@ -36,6 +37,12 @@ type file struct {
 	checkedEnv  *cel.Env
 	checked     *cel.Ast
 	checkIssues *cel.Issues
+
+	// The expression's value without input, keyed the same way; see
+	// constantValue.
+	evaluatedEnv *cel.Env
+	constant     ref.Val
+	isConstant   bool
 }
 
 // parse parses the file's content, returning the AST — nil if the content does

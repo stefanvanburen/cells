@@ -9,8 +9,10 @@ import (
 
 	"cel.dev/cel-go/cel"
 	"cel.dev/cel-go/common"
+	celast "cel.dev/cel-go/common/ast"
 	"cel.dev/cel-go/common/env"
 	"cel.dev/cel-go/common/operators"
+	"cel.dev/cel-go/common/types"
 	"cel.dev/cel-go/parser/gen"
 	"go.lsp.dev/protocol"
 	"go.lsp.dev/uri"
@@ -114,9 +116,37 @@ func computeDiagnostics(f *file, celEnv *cel.Env, checkSeverity protocol.Diagnos
 		tokens := newSourceTokens(f.content, parsed.NativeRep().SourceInfo())
 		return issuesToDiagnostics(f.content, checkIssues, checkSeverity, tokens)
 	}
+	if val, ok := f.constantValue(celEnv); ok {
+		if evalErr, isErr := val.(*types.Err); isErr {
+			return []protocol.Diagnostic{constantErrorDiagnostic(f.content, parsed.NativeRep(), evalErr)}
+		}
+	}
 
 	// No errors — clear diagnostics.
 	return []protocol.Diagnostic{}
+}
+
+// constantErrorDiagnostic reports the error an expression that takes no input
+// always fails with, such as a division by zero. It covers the subexpression
+// the error arose in, when cel-go records which, and the whole expression
+// otherwise.
+func constantErrorDiagnostic(content string, parsed *celast.AST, evalErr *types.Err) protocol.Diagnostic {
+	b := newSpanBuilder(newSourceTokens(content, parsed.SourceInfo()))
+	b.build(parsed.Expr())
+	var r protocol.Range
+	if n := b.spans[evalErr.NodeID()]; n != nil && n.start >= 0 {
+		r = lspRange(content, n.start, n.end)
+	} else {
+		trimmed := strings.TrimRight(content, " \t\r\n")
+		start := len(trimmed) - len(strings.TrimLeft(trimmed, " \t\r\n"))
+		r = lspRange(content, start, len(trimmed))
+	}
+	return protocol.Diagnostic{
+		Range:    r,
+		Severity: protocol.DiagnosticSeverityError,
+		Source:   protocol.NewOptional(serverName),
+		Message:  protocol.String("always fails: " + evalErr.Error()),
+	}
 }
 
 // diagnosticData is the data an undeclared-reference diagnostic carries for

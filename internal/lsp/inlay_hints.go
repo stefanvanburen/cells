@@ -8,7 +8,6 @@ import (
 	"cel.dev/cel-go/cel"
 	celast "cel.dev/cel-go/common/ast"
 	"cel.dev/cel-go/common/types"
-	"cel.dev/cel-go/common/types/ref"
 	"go.lsp.dev/protocol"
 )
 
@@ -49,10 +48,11 @@ func computeInlayHints(f *file, celEnv *cel.Env) ([]protocol.InlayHint, error) {
 	}
 	hints := loopVariableHints(f.content, checked.NativeRep())
 
-	result, err := evaluate(celEnv, checked)
-	if err != nil {
+	val, ok := f.constantValue(celEnv)
+	if !ok || types.IsError(val) {
 		return hints, nil
 	}
+	result := types.Format(val)
 
 	// Get the type of the expression
 	exprType := checked.OutputType()
@@ -134,34 +134,4 @@ func loopVariableType(comp celast.ComprehensionExpr, name string, typeMap map[in
 		return param(1)
 	}
 	return nil
-}
-
-// evalCostLimit bounds the runtime cost of evaluating an expression for its
-// hint. Requests are handled one at a time, so an expression that iterates
-// over large or nested lists would otherwise hold up every request behind it.
-const evalCostLimit = 1_000_000
-
-// evaluate evaluates a checked expression without any input, within
-// [evalCostLimit], and formats the result.
-func evaluate(celEnv *cel.Env, checked *cel.Ast) (string, error) {
-	prog, err := celEnv.Program(checked, cel.CostLimit(evalCostLimit))
-	if err != nil {
-		return "", err
-	}
-	val, _, err := prog.Eval(cel.NoVars())
-	if err != nil {
-		return "", err
-	}
-	return resultToString(val), nil
-}
-
-// resultToString converts a CEL value to a human-readable string for inlay hints.
-func resultToString(val any) string {
-	// The val returned from Program.Eval is already a ref.Val (CEL value)
-	// Format it using types.Format
-	if refVal, ok := val.(ref.Val); ok {
-		return types.Format(refVal)
-	}
-	// Fallback for non-ref.Val types
-	return fmt.Sprintf("%v", val)
 }

@@ -12,7 +12,7 @@ $ go install go.vanburen.xyz/cells/cmd/cells@latest
 ## Features
 
 * Semantic highlighting
-* Diagnostics
+* Diagnostics (including expressions that take no input and always fail, such as `1 / 0`)
 * Quick fixes (the spellings CEL suggests for undeclared names, and enabling the extension that declares them)
 * Formatting (keeps comments and literals as written, breaking lines at 100 columns)
 * Hover (including function return types, declared variable types, and message field types and comments)
