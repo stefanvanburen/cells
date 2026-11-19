@@ -67,17 +67,21 @@ func computeDefinition(f *file, celEnv *cel.Env, configPath string, pos protocol
 // The declaration is the first of the name's occurrences within the macro that
 // binds it, since a macro names what it binds before any use of it.
 func macroBindingLocation(f *file, nativeAST *celast.AST, info *identifierInfo) (protocol.Location, bool) {
-	sourceInfo := nativeAST.SourceInfo()
-	s := determineIdentifierScope(info.exprID, nativeAST.Expr())
-	if _, bound := s.(loopVarScope); !bound {
-		return protocol.Location{}, false
-	}
-
-	ranges := identifierOccurrences(nativeAST.Expr(), sourceInfo, f.content, s, info.name)
+	ranges := macroBoundOccurrences(f, nativeAST, info)
 	if len(ranges) == 0 {
 		return protocol.Location{}, false
 	}
 	return protocol.Location{URI: f.uri, Range: firstRange(ranges)}, true
+}
+
+// macroBoundOccurrences returns the ranges of every occurrence of the name
+// within the macro that binds it, or nil when no macro binds it.
+func macroBoundOccurrences(f *file, nativeAST *celast.AST, info *identifierInfo) []protocol.Range {
+	s := determineIdentifierScope(info.exprID, nativeAST.Expr())
+	if _, bound := s.(loopVarScope); !bound {
+		return nil
+	}
+	return identifierOccurrences(nativeAST.Expr(), nativeAST.SourceInfo(), f.content, s, info.name)
 }
 
 // firstRange returns the range that starts earliest in the file.

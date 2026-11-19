@@ -659,6 +659,7 @@ func TestServerRequestsWithBrokenConfig(t *testing.T) {
 		{"textDocument/semanticTokens/full", protocol.SemanticTokensParams{TextDocument: doc}},
 		{"textDocument/inlayHint", protocol.InlayHintParams{TextDocument: doc}},
 		{"textDocument/codeAction", protocol.CodeActionParams{TextDocument: doc}},
+		{"textDocument/linkedEditingRange", protocol.LinkedEditingRangeParams{TextDocument: doc, Position: pos}},
 	} {
 		t.Run(tt.method, func(t *testing.T) {
 			var result any

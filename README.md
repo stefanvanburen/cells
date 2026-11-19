@@ -21,6 +21,7 @@ $ go install go.vanburen.xyz/cells/cmd/cells@latest
 * Completion (including declared variables, the variables macros bind, and message fields)
 * Signature help
 * Variable renaming
+* Linked editing (the variables macros bind, edited everywhere at once)
 * Inlay hints (expression evaluation and loop variable types)
 * Selection ranges (expand and shrink selection by expression)
 * Folding ranges (brackets spanning lines, comment blocks and multi-line strings)
