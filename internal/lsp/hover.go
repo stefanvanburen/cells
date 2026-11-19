@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"maps"
+	"slices"
 	"strings"
 
 	"cel.dev/cel-go/cel"
@@ -275,24 +276,31 @@ func walkCELExprForHover(
 
 		funcName := call.FunctionName()
 
+		// When the expression type-checks, the call has a type and resolved to
+		// some of the function's overloads.
+		var resultType *types.Type
+		var overloadIDs []string
+		if typed != nil {
+			resultType = typed.GetType(expr.ID())
+			if reference, ok := typed.ReferenceMap()[expr.ID()]; ok {
+				overloadIDs = reference.OverloadIDs
+			}
+		}
+
 		if _, isOperator := celOperatorSymbol(funcName); isOperator {
 			if hasOffset {
 				byteStart, byteStop := celOffsetRangeToByteRange(exprString, offsetRange)
-				collectHover(byteStart, byteStop, celFunctionHover(funcName, celEnv, nil))
+				collectHover(byteStart, byteStop, celFunctionHover(funcName, celEnv, nil, overloadIDs))
 			}
 		} else if !isCELMacroFunction(funcName) {
 			// Non-operator, non-macro function or method.
-			var resultType *types.Type
-			if typed != nil {
-				resultType = typed.GetType(expr.ID())
-			}
 			if call.IsMemberFunction() {
 				targetStart := sourceInfo.GetStartLocation(call.Target().ID())
 				if targetStart.Line() > 0 {
 					targetByteOffset := celRuneOffsetToByteOffset(exprString, int32(targetStart.Column())+sourceInfo.ComputeOffset(int32(targetStart.Line()), 0))
 					start, end := findMethodNameAfterDot(targetByteOffset, funcName, exprString)
 					if start >= 0 {
-						collectHover(start, end, celFunctionHover(funcName, celEnv, resultType))
+						collectHover(start, end, celFunctionHover(funcName, celEnv, resultType, overloadIDs))
 					}
 				}
 			} else if startLoc.Line() > 0 {
@@ -300,7 +308,7 @@ func walkCELExprForHover(
 				funcStart := celByteOffset - len(funcName)
 				funcEnd := funcStart + len(funcName)
 				if funcStart >= 0 && funcEnd <= len(exprString) && exprString[funcStart:funcEnd] == funcName {
-					collectHover(funcStart, funcEnd, celFunctionHover(funcName, celEnv, resultType))
+					collectHover(funcStart, funcEnd, celFunctionHover(funcName, celEnv, resultType, overloadIDs))
 				}
 			}
 		}
@@ -433,8 +441,10 @@ func celKeywordHover(name string) string {
 
 // celFunctionHover returns hover markdown for a CEL function (including operators and type conversions).
 // It looks up the function declaration in the CEL environment for upstream documentation, and
-// includes resultType, the type of the call, if it is not nil.
-func celFunctionHover(funcName string, celEnv *cel.Env, resultType *types.Type) string {
+// includes resultType, the type of the call, if it is not nil and the signatures of the overloads
+// the call resolved to do not already give it. If overloadIDs is not empty, it lists only the
+// overloads the call resolved to.
+func celFunctionHover(funcName string, celEnv *cel.Env, resultType *types.Type, overloadIDs []string) string {
 	funcs := celEnv.Functions()
 	funcDecl, ok := funcs[funcName]
 	if !ok {
@@ -443,6 +453,11 @@ func celFunctionHover(funcName string, celEnv *cel.Env, resultType *types.Type) 
 	var result string
 	doc := funcDecl.Documentation()
 	if doc != nil {
+		if matched := slices.DeleteFunc(slices.Clone(doc.Children), func(overload *common.Doc) bool {
+			return !slices.Contains(overloadIDs, overload.Name)
+		}); len(matched) > 0 {
+			doc.Children = matched
+		}
 		// For operators, use the display symbol instead of the internal name.
 		if symbol, isOp := celOperatorSymbol(funcName); isOp {
 			result = formatCELDoc(doc, "**Operator**: ", symbol)
@@ -459,13 +474,30 @@ func celFunctionHover(funcName string, celEnv *cel.Env, resultType *types.Type) 
 			result = fmt.Sprintf("`%s()` — function", funcName)
 		}
 	}
-	if resultType != nil {
+	if resultType != nil && !celOverloadsDeclareType(funcDecl, overloadIDs, resultType) {
 		result += fmt.Sprintf("\n\n**Return type**: `%s`", resultType)
 	}
 	if link := celFunctionDocumentationLink(funcName); link != "" {
 		result += "\n\n" + link
 	}
 	return result
+}
+
+// celOverloadsDeclareType reports whether every overload of funcDecl that
+// overloadIDs names declares exactly resultType as its result, so that their
+// signatures already give it. A generic overload, such as `type(<A>)`, does not.
+func celOverloadsDeclareType(funcDecl *decls.FunctionDecl, overloadIDs []string, resultType *types.Type) bool {
+	var named bool
+	for _, overload := range funcDecl.OverloadDecls() {
+		if !slices.Contains(overloadIDs, overload.ID()) {
+			continue
+		}
+		named = true
+		if !overload.ResultType().IsExactType(resultType) {
+			return false
+		}
+	}
+	return named
 }
 
 // celMacroHover returns hover markdown for a CEL macro.

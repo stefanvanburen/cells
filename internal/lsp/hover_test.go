@@ -124,9 +124,14 @@ func TestHover(t *testing.T) {
 		{name: "size_overloads", file: "testdata/hover/functions.cel", line: 0, char: 1, contains: "**Overloads**", desc: "'size' has overloads"},
 		{name: "int_type_conversion", file: "testdata/hover/functions.cel", line: 0, char: 17, contains: "int", desc: "'int' type conversion"},
 		{name: "int_description", file: "testdata/hover/functions.cel", line: 0, char: 17, contains: "convert a value to an int", desc: "'int' description"},
-		{name: "size_return_type", file: "testdata/hover/functions.cel", line: 0, char: 1, contains: "**Return type**: `int`", desc: "'size' return type"},
-		{name: "int_return_type", file: "testdata/hover/functions.cel", line: 0, char: 17, contains: "**Return type**: `int`", desc: "'int' return type"},
+		{name: "size_no_redundant_return_type", file: "testdata/hover/functions.cel", line: 0, char: 1, contains: "- `size(string) -> int`", notContains: "**Return type**", desc: "no return type the matched signature already gives"},
+		{name: "int_no_redundant_return_type", file: "testdata/hover/functions.cel", line: 0, char: 17, contains: "-> int`", notContains: "**Return type**", desc: "no return type the matched signature already gives"},
+		{name: "type_generic_return_type", file: "testdata/hover/generic.cel", line: 0, char: 1, contains: "**Return type**: `type(int)`", desc: "return type of a generic overload"},
 		{name: "size_unchecked_no_return_type", file: "testdata/hover/unchecked.cel", line: 0, char: 1, contains: "**Overloads**", notContains: "**Return type**", desc: "no return type when the expression does not type-check"},
+		{name: "size_matched_overload", file: "testdata/hover/functions.cel", line: 0, char: 1, contains: "- `size(string) -> int`", notContains: "size(bytes)", desc: "only the overload 'size' resolved to"},
+		{name: "size_unchecked_all_overloads", file: "testdata/hover/unchecked.cel", line: 0, char: 1, contains: "- `size(bytes) -> int`", desc: "every overload when the expression does not type-check"},
+		{name: "greater_than_matched_overload", file: "testdata/hover/checked_operators.cel", line: 0, char: 2, contains: "- `int > int -> bool`", notContains: "double >", desc: "only the overload '>' resolved to"},
+		{name: "greater_than_unchecked_all_overloads", file: "testdata/hover/operators.cel", line: 0, char: 2, contains: "- `double > double -> bool`", desc: "every '>' overload when the expression does not type-check"},
 
 		// Type conversions tests
 		{name: "string_conversion", file: "testdata/hover/type_conversions.cel", line: 0, char: 0, contains: "convert a value to a string", desc: "'string()' description"},
@@ -137,7 +142,7 @@ func TestHover(t *testing.T) {
 		// Methods tests
 		{name: "startswith_method", file: "testdata/hover/methods.cel", line: 0, char: 8, contains: "startsWith", desc: "'startsWith' method"},
 		{name: "startswith_description", file: "testdata/hover/methods.cel", line: 0, char: 8, contains: "prefix", desc: "'startsWith' description"},
-		{name: "startswith_return_type", file: "testdata/hover/methods.cel", line: 0, char: 8, contains: "**Return type**: `bool`", desc: "'startsWith' return type"},
+		{name: "startswith_no_redundant_return_type", file: "testdata/hover/methods.cel", line: 0, char: 8, contains: "-> bool`", notContains: "**Return type**", desc: "no return type the matched signature already gives"},
 		{name: "contains_method", file: "testdata/hover/methods.cel", line: 0, char: 38, contains: "contains", desc: "'contains' method"},
 		{name: "contains_description", file: "testdata/hover/methods.cel", line: 0, char: 38, contains: "substring", desc: "'contains' description"},
 
