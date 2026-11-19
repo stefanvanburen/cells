@@ -400,7 +400,7 @@ func (s *server) Initialize(_ context.Context, params *protocol.InitializeParams
 			},
 			HoverProvider:                   protocol.Boolean(true),
 			DocumentFormattingProvider:      protocol.Boolean(true),
-			DocumentRangeFormattingProvider: protocol.Boolean(true),
+			DocumentRangeFormattingProvider: &protocol.DocumentRangeFormattingOptions{RangesSupport: new(true)},
 			CompletionProvider: &protocol.CompletionOptions{
 				TriggerCharacters: []string{"."},
 				CompletionItem:    &protocol.ServerCompletionItemOptions{LabelDetailsSupport: new(true)},

@@ -115,7 +115,11 @@ func TestFormatCapabilities(t *testing.T) {
 	ok.MustNoError(t, err)
 
 	ok.True(t, result.Capabilities.DocumentFormattingProvider != nil)
-	ok.True(t, result.Capabilities.DocumentRangeFormattingProvider != nil)
+	rangeOptions, isOptions := result.Capabilities.DocumentRangeFormattingProvider.(*protocol.DocumentRangeFormattingOptions)
+	if !isOptions {
+		t.Fatalf("range formatting provider: %#v", result.Capabilities.DocumentRangeFormattingProvider)
+	}
+	ok.Equal(t, *rangeOptions.RangesSupport, true)
 }
 
 // TestRangeFormatting formats a document with two changed lines, 1 and 3,
@@ -131,8 +135,11 @@ func TestRangeFormatting(t *testing.T) {
 	tests := []struct {
 		name      string
 		selection protocol.Range
-		edits     int
-		want      string
+		// more holds further selections, which are sent along with selection
+		// in a textDocument/rangesFormatting request.
+		more  []protocol.Range
+		edits int
+		want  string
 	}{
 		{
 			name:      "line_of_one_change",
@@ -164,18 +171,39 @@ func TestRangeFormatting(t *testing.T) {
 			edits:     2,
 			want:      "[\n  1 + 2,\n  3,\n  4 + 5,\n]\n",
 		},
+		{
+			name:      "ranges_on_each_change",
+			selection: protocol.Range{Start: protocol.Position{Line: 1}, End: protocol.Position{Line: 2}},
+			more:      []protocol.Range{{Start: protocol.Position{Line: 3, Character: 3}, End: protocol.Position{Line: 3, Character: 3}}},
+			edits:     2,
+			want:      "[\n  1 + 2,\n  3,\n  4 + 5,\n]\n",
+		},
+		{
+			name:      "ranges_on_one_change",
+			selection: protocol.Range{Start: protocol.Position{Line: 2}, End: protocol.Position{Line: 3}},
+			more:      []protocol.Range{{Start: protocol.Position{Line: 3, Character: 3}, End: protocol.Position{Line: 3, Character: 3}}},
+			edits:     1,
+			want:      "[\n  1+2,\n  3,\n  4 + 5,\n]\n",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			t.Parallel()
 
 			clientConn, testURI := setupLSPServer(t, getAbsPath(t, path))
+			doc := protocol.TextDocumentIdentifier{URI: testURI}
+			options := protocol.FormattingOptions{TabSize: 2, InsertSpaces: true}
 			var edits []protocol.TextEdit
-			_, err := clientConn.Call(t.Context(), "textDocument/rangeFormatting", protocol.DocumentRangeFormattingParams{
-				TextDocument: protocol.TextDocumentIdentifier{URI: testURI},
-				Range:        tt.selection,
-				Options:      protocol.FormattingOptions{TabSize: 2, InsertSpaces: true},
-			}, &edits)
+			var err error
+			if tt.more == nil {
+				_, err = clientConn.Call(t.Context(), "textDocument/rangeFormatting", protocol.DocumentRangeFormattingParams{
+					TextDocument: doc, Range: tt.selection, Options: options,
+				}, &edits)
+			} else {
+				_, err = clientConn.Call(t.Context(), "textDocument/rangesFormatting", protocol.DocumentRangesFormattingParams{
+					TextDocument: doc, Ranges: append([]protocol.Range{tt.selection}, tt.more...), Options: options,
+				}, &edits)
+			}
 			ok.MustNoError(t, err)
 
 			ok.Equal(t, len(edits), tt.edits)

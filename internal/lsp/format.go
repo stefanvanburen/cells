@@ -25,9 +25,21 @@ func (s *server) Formatting(ctx context.Context, params *protocol.DocumentFormat
 // intersect the requested range. An edit covers a whole run of changed lines,
 // so a range that covers part of a run formats all of it.
 func (s *server) RangeFormatting(ctx context.Context, params *protocol.DocumentRangeFormattingParams) ([]protocol.TextEdit, error) {
+	return s.RangesFormatting(ctx, &protocol.DocumentRangesFormattingParams{
+		TextDocument: params.TextDocument,
+		Ranges:       []protocol.Range{params.Range},
+		Options:      params.Options,
+	})
+}
+
+// RangesFormatting formats the whole document and returns the edits that
+// intersect any of the requested ranges, as RangeFormatting does for one.
+func (s *server) RangesFormatting(ctx context.Context, params *protocol.DocumentRangesFormattingParams) ([]protocol.TextEdit, error) {
 	edits := s.formattingEdits(ctx, params.TextDocument.URI)
 	return slices.DeleteFunc(edits, func(edit protocol.TextEdit) bool {
-		return !editIntersectsRange(edit.Range, params.Range)
+		return !slices.ContainsFunc(params.Ranges, func(r protocol.Range) bool {
+			return editIntersectsRange(edit.Range, r)
+		})
 	}), nil
 }
 
