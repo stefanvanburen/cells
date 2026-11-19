@@ -62,7 +62,8 @@ func newProtoFiles(sets []*descriptorpb.FileDescriptorSet) *protoregistry.Files 
 }
 
 // TextDocumentContent renders the .proto file a protoURI names, from the
-// descriptor sets cells was given.
+// descriptor sets cells was given, and records it among the files the client
+// is asked to request again when the environment is rebuilt.
 func (s *server) TextDocumentContent(_ context.Context, params *protocol.TextDocumentContentParams) (*protocol.TextDocumentContentResult, error) {
 	path, ok := protoPath(params.URI)
 	if !ok {
@@ -72,6 +73,12 @@ func (s *server) TextDocumentContent(_ context.Context, params *protocol.TextDoc
 	if file == nil {
 		return nil, jsonrpc2.Errorf(jsonrpc2.InvalidParams, "no descriptor set describes %s", path)
 	}
+	s.mu.Lock()
+	if s.servedProtos == nil {
+		s.servedProtos = make(map[uri.URI]bool)
+	}
+	s.servedProtos[params.URI] = true
+	s.mu.Unlock()
 	text, _ := renderProtoFile(file)
 	return &protocol.TextDocumentContentResult{Text: text}, nil
 }

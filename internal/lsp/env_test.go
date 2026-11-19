@@ -487,20 +487,28 @@ func (r *refreshRecorder) DiagnosticRefresh(context.Context) error {
 	return nil
 }
 
+func (r *refreshRecorder) TextDocumentContentRefresh(_ context.Context, params *protocol.TextDocumentContentRefreshParams) error {
+	r.got <- "textDocumentContent " + string(params.URI)
+	return nil
+}
+
 // What a client requests as a document changes and keeps until it next
 // changes is requested again when the configuration it was computed under is
 // edited, for each kind the client can be asked to refresh: inlay hints and
-// semantic tokens, and diagnostics when the client pulls them.
+// semantic tokens, diagnostics when the client pulls them, and each rendered
+// .proto file it has been sent.
 func TestServerRequestsRefreshAfterConfigChange(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
-		name string
-		pull bool
-		want []string
+		name    string
+		pull    bool
+		content bool
+		want    []string
 	}{
-		{"push diagnostics", false, []string{"inlayHint", "semanticTokens"}},
-		{"pull diagnostics", true, []string{"diagnostic", "inlayHint", "semanticTokens"}},
+		{"push diagnostics", false, false, []string{"inlayHint", "semanticTokens"}},
+		{"pull diagnostics", true, false, []string{"diagnostic", "inlayHint", "semanticTokens"}},
+		{"proto content", false, true, []string{"inlayHint", "semanticTokens", "textDocumentContent cells-proto:/cells/test/request.proto"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -513,7 +521,11 @@ func TestServerRequestsRefreshAfterConfigChange(t *testing.T) {
 			celPath := filepath.Join(dir, "a.cel")
 
 			recorder := &refreshRecorder{got: make(chan string, 10)}
-			conn := newLSPClient(t, recorder, lsp.Options{})
+			var opts lsp.Options
+			if tt.content {
+				opts.DescriptorSets = []string{writeDescriptorSet(t)}
+			}
+			conn := newLSPClient(t, recorder, opts)
 			params := protocol.InitializeParams{
 				Capabilities: protocol.ClientCapabilities{
 					Workspace: &protocol.WorkspaceClientCapabilities{
@@ -525,6 +537,9 @@ func TestServerRequestsRefreshAfterConfigChange(t *testing.T) {
 			}
 			if tt.pull {
 				params.InitializationOptions = protocol.LSPAny(`{"pullDiagnostics": true}`)
+			}
+			if tt.content {
+				params.Capabilities.Workspace.TextDocumentContent = &protocol.TextDocumentContentClientCapabilities{}
 			}
 			var initResult protocol.InitializeResult
 			_, err := conn.Call(ctx, "initialize", params, &initResult)
@@ -544,6 +559,15 @@ func TestServerRequestsRefreshAfterConfigChange(t *testing.T) {
 			// that follow have nothing to refresh.
 			openAndDiagnose(t, conn, celPath, "items.all(x, x > 0)")
 			requestHints()
+			if tt.content {
+				var result protocol.TextDocumentContentResult
+				_, err := conn.Call(ctx, "workspace/textDocumentContent", protocol.TextDocumentContentParams{URI: requestProtoURI}, &result)
+				ok.MustNoError(t, err)
+				// A file no descriptor set describes is never sent, so there
+				// is nothing of it to refresh.
+				_, err = conn.Call(ctx, "workspace/textDocumentContent", protocol.TextDocumentContentParams{URI: "cells-proto:/cells/test/missing.proto"}, &result)
+				ok.ErrorContains(t, err, "no descriptor set describes")
+			}
 
 			ok.MustNoError(t, os.WriteFile(configPath, []byte(`
 name: test

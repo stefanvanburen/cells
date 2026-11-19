@@ -157,6 +157,11 @@ type server struct {
 	// initializes. Go to definition only points into them if it can.
 	textDocumentContent bool
 
+	// servedProtos are the rendered .proto files the client has been sent,
+	// which it is asked to request again when the environment is rebuilt. It
+	// is guarded by mu.
+	servedProtos map[uri.URI]bool
+
 	// refresh is which of the workspace refresh requests the client supports,
 	// which it says when it initializes.
 	refresh refreshSupport
@@ -318,7 +323,8 @@ type refreshSupport struct {
 }
 
 // requestRefresh asks the client to request again the inlay hints, semantic
-// tokens, and pulled diagnostics it has, of those it supports refreshing.
+// tokens, and pulled diagnostics it has, of those it supports refreshing, and
+// each rendered .proto file it has been sent.
 //
 // The requests are sent from a goroutine of their own. Handlers run on the
 // goroutine that reads the connection, so one that waited for the client's
@@ -339,6 +345,13 @@ func (s *server) requestRefresh(ctx context.Context) {
 	if s.refresh.diagnostics && s.pullDiagnostics {
 		refreshes = append(refreshes, client.DiagnosticRefresh)
 	}
+	s.mu.Lock()
+	for protoURI := range s.servedProtos {
+		refreshes = append(refreshes, func(ctx context.Context) error {
+			return client.TextDocumentContentRefresh(ctx, &protocol.TextDocumentContentRefreshParams{URI: protoURI})
+		})
+	}
+	s.mu.Unlock()
 	if len(refreshes) == 0 {
 		return
 	}
